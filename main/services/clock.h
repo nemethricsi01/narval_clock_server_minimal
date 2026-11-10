@@ -12,3 +12,6 @@
  *  - After time is valid, sends CAN DATE and TIME frames on every 1 Hz tick.
  */
 esp_err_t clock_service_init(void);
+
+/** Called by ui_init() once all LVGL widgets are built and safe to write. */
+void clock_notify_ui_ready(void);

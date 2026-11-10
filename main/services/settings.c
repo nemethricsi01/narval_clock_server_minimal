@@ -34,6 +34,7 @@ esp_err_t settings_load(settings_t *s)
     if (nvs_get_u8(h, "ntp_rate_idx", &v) == ESP_OK) s->ntp_rate_idx   = v < 5  ? v : 0;
     if (nvs_get_u8(h, "dst_idx",      &v) == ESP_OK) s->dst_idx        = v <= 2 ? v : 0;
     if (nvs_get_u8(h, "tz_idx",       &v) == ESP_OK) s->tz_idx         = v <= 24 ? v : 12;
+    if (nvs_get_u8(h, "rtc_trim",     &v) == ESP_OK) s->rtc_trim       = (int8_t)v;
 
     nvs_close(h);
     ESP_LOGI(TAG, "loaded");
@@ -60,6 +61,7 @@ esp_err_t settings_save(const settings_t *s)
     nvs_set_u8(h,   "ntp_rate_idx", (uint8_t)s->ntp_rate_idx);
     nvs_set_u8(h,   "dst_idx",      (uint8_t)s->dst_idx);
     nvs_set_u8(h,   "tz_idx",       (uint8_t)s->tz_idx);
+    nvs_set_u8(h,   "rtc_trim",     (uint8_t)s->rtc_trim);
 
     err = nvs_commit(h);
     nvs_close(h);

@@ -55,14 +55,6 @@ static bool IRAM_ATTR on_rx_done(twai_node_handle_t node,
 
     frame.header = rx.header;
 
-    // In self-test mode the controller loops its own TX frames back to RX.
-    // Drop our clock DATE (data[3]==0x02) and TIME (data[3]==0x01) frames so
-    // they never reach can_task.
-    if (frame.header.id == 0 && frame.header.dlc == 4 &&
-        (frame.data[3] == 0x01 || frame.data[3] == 0x02)) {
-        return false;
-    }
-
     BaseType_t woken = pdFALSE;
     xQueueSendFromISR(s_queue, &frame, &woken);
     return woken == pdTRUE;

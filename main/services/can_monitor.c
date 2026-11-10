@@ -1,22 +1,18 @@
 // Threading model
 // ---------------
-// can_mon_push()    — called from CAN task (priority 3) and clock task (priority 4).
-// can_mon_snapshot()— called from the LVGL task via can_monitor_refresh().
-// notify_trampoline — queued via lv_async_call; runs in the LVGL task.
+// can_mon_push()       — called from CAN task (priority 3) and clock task (priority 4).
+// can_mon_snapshot()   — called from the LVGL task via can_monitor_refresh().
+// can_mon_has_new_data()— polled by an LVGL timer; runs in the LVGL task.
 //
-// s_mutex protects the ring buffer AND the s_notify_pending flag, preventing the
-// dual-core race where two tasks both pass the "!pending" check simultaneously.
-// lv_async_call() is invoked only after s_mutex is released, and is wrapped in
-// display_lock/display_unlock because lv_async_call internally calls lv_malloc,
-// which is NOT thread-safe — without the lock a concurrent LVGL-task malloc can
-// corrupt the TLSF heap on the second core.
+// s_mutex protects the ring buffer only.
+// s_new_data is a volatile flag set by any pusher and cleared by the LVGL-task
+// poll timer.  No display_lock is ever acquired from the CAN data path, so
+// clock_task can always acquire display_lock to run its NTP check.
 
 #include "can_monitor.h"
-#include "display.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "lvgl.h"
 #include <time.h>
 #include <string.h>
 #include <stdio.h>
@@ -41,21 +37,10 @@ static int               s_count = 0;
 static SemaphoreHandle_t s_mutex = NULL;
 
 // ---------------------------------------------------------------------------
-// Notification
+// New-data flag — written by any pusher, cleared by the LVGL poll timer
 // ---------------------------------------------------------------------------
 
-static void (*s_notify_fn)(void) = NULL;
-static bool  s_notify_pending    = false;  // guarded by s_mutex
-
-static void notify_trampoline(void *arg)
-{
-    (void)arg;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    s_notify_pending = false;
-    xSemaphoreGive(s_mutex);
-
-    if (s_notify_fn) s_notify_fn();
-}
+static volatile bool s_new_data = false;
 
 // ---------------------------------------------------------------------------
 // Decoder helpers
@@ -319,47 +304,49 @@ void can_mon_push(const can_frame_t *f, bool is_tx)
     s_log[s_head].is_sep   = false;
     s_head  = (s_head + 1) % CAN_MON_LOG_SIZE;
     if (s_count < CAN_MON_LOG_SIZE) s_count++;
-
-    bool do_notify = (s_notify_fn && !s_notify_pending);
-    if (do_notify) s_notify_pending = true;
     xSemaphoreGive(s_mutex);
 
-    if (do_notify) {
-        display_lock();
-        lv_async_call(notify_trampoline, NULL);
-        display_unlock();
-    }
+    s_new_data = true;
 }
 
 static int s_sep_counter = 0;
+
+static void push_separator_locked(void)
+{
+    s_sep_counter = (s_sep_counter % 10) + 1;
+    memset(&s_log[s_head], 0, sizeof(s_log[s_head]));
+    s_log[s_head].is_sep  = true;
+    s_log[s_head].sep_num = (uint8_t)s_sep_counter;
+    s_head = (s_head + 1) % CAN_MON_LOG_SIZE;
+    if (s_count < CAN_MON_LOG_SIZE) s_count++;
+}
 
 void can_mon_push_separator(void)
 {
     if (!s_mutex) return;
 
-    s_sep_counter = (s_sep_counter % 10) + 1;
-
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    memset(&s_log[s_head], 0, sizeof(s_log[s_head]));
-    s_log[s_head].is_sep   = true;
-    s_log[s_head].sep_num  = (uint8_t)s_sep_counter;
-    s_head  = (s_head + 1) % CAN_MON_LOG_SIZE;
-    if (s_count < CAN_MON_LOG_SIZE) s_count++;
-
-    bool do_notify = (s_notify_fn && !s_notify_pending);
-    if (do_notify) s_notify_pending = true;
+    push_separator_locked();
     xSemaphoreGive(s_mutex);
 
-    if (do_notify) {
-        display_lock();
-        lv_async_call(notify_trampoline, NULL);
-        display_unlock();
-    }
+    s_new_data = true;
 }
 
-void can_mon_set_notify(void (*fn)(void))
+void can_mon_push_separator_from_ui(void)
 {
-    s_notify_fn = fn;
+    if (!s_mutex) return;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    push_separator_locked();
+    xSemaphoreGive(s_mutex);
+    // No poll notify needed: caller (UI task) calls can_monitor_refresh() directly.
+}
+
+bool can_mon_has_new_data(void)
+{
+    if (!s_new_data) return false;
+    s_new_data = false;
+    return true;
 }
 
 int can_mon_snapshot(char *out, size_t out_len, int local_offset_hours)

@@ -10,6 +10,7 @@ static const char *TAG = "encoder";
 static encoder_cb_t   s_cb;
 static void          *s_user_data;
 static knob_handle_t  s_knob;
+static volatile bool  s_suppress_next_click = false;
 
 // ---------------------------------------------------------------------------
 // Knob callbacks
@@ -31,16 +32,22 @@ static void on_knob_left(void *arg, void *data)
 
 static void on_btn_click(void *arg, void *data)
 {
+    if (s_suppress_next_click) {
+        s_suppress_next_click = false;
+        return;
+    }
     if (s_cb) s_cb(ENCODER_CLICK, s_user_data);
 }
 
 static void on_btn_long(void *arg, void *data)
 {
+    s_suppress_next_click = true;
     if (s_cb) s_cb(ENCODER_LONG, s_user_data);
 }
 
 static void on_btn_down(void *arg, void *data)
 {
+    s_suppress_next_click = false;  // new press clears any stale flag
     if (s_cb) s_cb(ENCODER_PRESS_DOWN, s_user_data);
 }
 

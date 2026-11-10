@@ -17,6 +17,7 @@
 #include "freertos/semphr.h"
 
 #include <time.h>
+#include <sys/time.h>
 #include <string.h>
 
 static const char *TAG = "clock";
@@ -24,6 +25,7 @@ static const char *TAG = "clock";
 static i2c_dev_t         s_rtc;
 static SemaphoreHandle_t s_sqw_sem;
 static volatile bool     s_time_valid   = false;
+static volatile bool     s_ui_ready     = false;
 static char              s_ntp_server[32];
 static volatile time_t   s_ntp_sync_utc = 0;  // frozen UTC timestamp of last NTP sync; 0 = never
 static volatile time_t   s_can_sync_utc = 0;  // frozen UTC timestamp of last successful CAN send; 0 = never
@@ -108,7 +110,6 @@ static bool send_can_datetime(const struct tm *t)
 
     // TIME:  000HHHHH 00MMMMMM 00SSSSSS 00000001
     time_f.data[0] = (uint8_t)(t->tm_hour & 0x1F);
-    // time_f.data[0] |= 0x60; // address 3 for testing 
     time_f.data[1] = (uint8_t)(t->tm_min  & 0x3F);
     time_f.data[2] = (uint8_t)(t->tm_sec  & 0x3F);
     time_f.data[3] = 0x01;
@@ -131,7 +132,7 @@ static void on_ntp_sync(struct timeval *tv)
     gmtime_r(&t_sec, &t);
 
     if (ds3231_set_time(&s_rtc, &t) == ESP_OK) {
-        s_ntp_sync_utc = t_sec;  // freeze the UTC sync timestamp
+        s_ntp_sync_utc = t_sec;
         s_time_valid   = true;
         ESP_LOGI(TAG, "synced → RTC set: %04d-%02d-%02d %02d:%02d:%02d UTC",
                  t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
@@ -147,33 +148,18 @@ static void on_ntp_sync(struct timeval *tv)
 
 static void clock_task(void *arg)
 {
-    // Wait for DHCP to assign an IP (default network config, no user action needed)
-    ESP_LOGI(TAG, "waiting for network...");
-    while (!network_is_connected()) {
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-    ESP_LOGI(TAG, "network up, IP: %s", network_get_ip_str());
-
-    display_lock();
-    ui_get_ntp_server_str(s_ntp_server, sizeof(s_ntp_server));
-    uint32_t last_ntp_rate = ui_get_ntp_update_rate_sec();
-    uint32_t last_can_rate = ui_get_update_rate_sec();
-    display_unlock();
-
-    ESP_LOGI(TAG, "starting NTP sync via %s", s_ntp_server);
-    esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(s_ntp_server);
-    sntp_cfg.sync_cb = on_ntp_sync;
-    esp_netif_sntp_init(&sntp_cfg);
-    sntp_set_sync_interval(last_ntp_rate * 1000);
-
-    uint32_t can_ticks         = 0;   // 0 = send on first valid tick
+    bool     sntp_started      = false;
+    uint32_t last_ntp_rate     = 0;
+    uint32_t last_can_rate     = 0;
+    uint32_t can_ticks         = 0;
     uint32_t ticks_since_valid = 0;
+    int8_t   last_rtc_trim     = 0;
+    bool     rtc_trim_synced   = false;
 
     // Tick loop: each 1 Hz rising edge gives the semaphore
     while (1) {
         xSemaphoreTake(s_sqw_sem, portMAX_DELAY);
-        if (!s_time_valid) continue;
-        ticks_since_valid++;
+        if (!s_ui_ready) continue;   // wait for LVGL widgets to be built
 
         // Snapshot all mutable UI settings in one lock window so clock_task never
         // races with the LVGL task modifying the same state on the other core.
@@ -182,25 +168,56 @@ static void clock_task(void *arg)
         uint32_t cur_can_rate = ui_get_update_rate_sec();
         int      tz_offset    = ui_get_tz_offset_hours();
         int      dst_mode     = ui_get_dst_mode();
+        int8_t   cur_rtc_trim = ui_get_rtc_trim();
         char     cur_ntp_server[32];
         ui_get_ntp_server_str(cur_ntp_server, sizeof(cur_ntp_server));
         display_unlock();
 
+        // Start SNTP once, the first time network becomes available.
+        // This must not be gated on s_time_valid: if the DS3231 has no valid time
+        // yet, NTP is the only path to set it via on_ntp_sync.
+        if (!sntp_started && network_is_connected()) {
+            sntp_started = true;
+            strncpy(s_ntp_server, cur_ntp_server, sizeof(s_ntp_server) - 1);
+            s_ntp_server[sizeof(s_ntp_server) - 1] = '\0';
+            last_ntp_rate = cur_ntp_rate;
+            ESP_LOGI(TAG, "network up (%s) — starting NTP via %s",
+                     network_get_ip_str(), s_ntp_server);
+            esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(s_ntp_server);
+            sntp_cfg.sync_cb = on_ntp_sync;
+            esp_netif_sntp_init(&sntp_cfg);
+            sntp_set_sync_interval(last_ntp_rate * 1000);
+        }
+
         // Apply NTP rate change immediately if the user updated it
-        if (cur_ntp_rate != last_ntp_rate) {
+        if (sntp_started && cur_ntp_rate != last_ntp_rate) {
             sntp_set_sync_interval(cur_ntp_rate * 1000);
             sntp_restart();
             last_ntp_rate = cur_ntp_rate;
         }
 
         // Apply NTP server change immediately if the user updated it
-        if (strcmp(cur_ntp_server, s_ntp_server) != 0) {
+        if (sntp_started && strcmp(cur_ntp_server, s_ntp_server) != 0) {
             strncpy(s_ntp_server, cur_ntp_server, sizeof(s_ntp_server) - 1);
             s_ntp_server[sizeof(s_ntp_server) - 1] = '\0';
             esp_sntp_setservername(0, s_ntp_server);
             sntp_restart();
             ESP_LOGI(TAG, "NTP server → %s", s_ntp_server);
         }
+
+        // Apply DS3231 aging offset once on startup, then on every user change.
+        // ds3231_set_aging_offset also triggers a manual temperature conversion
+        // so the new offset takes effect on the oscillator immediately.
+        if (!rtc_trim_synced || cur_rtc_trim != last_rtc_trim) {
+            rtc_trim_synced = true;
+            last_rtc_trim   = cur_rtc_trim;
+            if (ds3231_set_aging_offset(&s_rtc, cur_rtc_trim) == ESP_OK)
+                ESP_LOGI(TAG, "aging offset → %d", cur_rtc_trim);
+        }
+
+        // The rest requires a valid time reading from the DS3231
+        if (!s_time_valid) continue;
+        ticks_since_valid++;
 
         // Reset CAN counter on rate change so the new rate takes effect immediately
         if (cur_can_rate != last_can_rate) {
@@ -252,12 +269,14 @@ static void clock_task(void *arg)
             strcpy(can_str, "--:--:--");
         }
 
-        // NTP error: overdue if never synced after 10 min, or missed 2× the sync interval
-        bool ntp_err;
-        if (s_ntp_sync_utc != 0) {
-            ntp_err = (utc_ts - s_ntp_sync_utc) > (time_t)(last_ntp_rate * 2);
-        } else {
-            ntp_err = ticks_since_valid > 600;
+        // NTP error: only meaningful once SNTP is running
+        bool ntp_err = false;
+        if (sntp_started) {
+            if (s_ntp_sync_utc != 0) {
+                ntp_err = (utc_ts - s_ntp_sync_utc) > (time_t)(last_ntp_rate * 2);
+            } else {
+                ntp_err = ticks_since_valid > 600;
+            }
         }
 
         display_lock();
@@ -272,6 +291,11 @@ static void clock_task(void *arg)
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+void clock_notify_ui_ready(void)
+{
+    s_ui_ready = true;
+}
 
 esp_err_t clock_service_init(void)
 {
@@ -293,6 +317,21 @@ esp_err_t clock_service_init(void)
     ESP_RETURN_ON_ERROR(ds3231_enable_squarewave(&s_rtc),
                         TAG, "sqwave enable failed");
     ESP_LOGI(TAG, "DS3231 ready, 1 Hz SQW enabled");
+
+    // Seed system time from DS3231 immediately so that CAN frame timestamps
+    // and the on-screen clock are valid before NTP first syncs.
+    // Any year < 2020 is treated as an unset RTC (still at factory default).
+    struct tm rtc_seed;
+    if (ds3231_get_time(&s_rtc, &rtc_seed) == ESP_OK && rtc_seed.tm_year >= 120) {
+        struct timeval tv = { .tv_sec = mktime(&rtc_seed), .tv_usec = 0 };
+        settimeofday(&tv, NULL);
+        s_time_valid = true;
+        ESP_LOGI(TAG, "seeded from DS3231: %04d-%02d-%02d %02d:%02d:%02d UTC",
+                 rtc_seed.tm_year + 1900, rtc_seed.tm_mon + 1, rtc_seed.tm_mday,
+                 rtc_seed.tm_hour, rtc_seed.tm_min, rtc_seed.tm_sec);
+    } else {
+        ESP_LOGW(TAG, "DS3231 time not valid — waiting for NTP sync");
+    }
 
     // Binary semaphore consumed by clock_task, given by ISR
     s_sqw_sem = xSemaphoreCreateBinary();

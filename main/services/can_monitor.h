@@ -22,10 +22,17 @@ void can_mon_push(const can_frame_t *f, bool is_tx);
 void can_mon_push_separator(void);
 
 /**
- * Register the callback that fires (via lv_async_call) whenever new data arrives.
- * The callback runs in the LVGL task — LVGL APIs may be called freely inside it.
+ * Push a separator from the LVGL task without triggering the poll flag.
+ * Use when the caller will immediately call can_monitor_refresh() itself.
  */
-void can_mon_set_notify(void (*fn)(void));
+void can_mon_push_separator_from_ui(void);
+
+/**
+ * Returns true (and clears the flag) if new data has been pushed since the
+ * last call.  Intended for the LVGL poll timer — safe to call from the LVGL
+ * task without holding display_lock separately.
+ */
+bool can_mon_has_new_data(void);
 
 /**
  * Render the full log (oldest first) into out[0..out_len-1] as a null-terminated string.

@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "services/clock.h"
 #include "services/display.h"
 #include "services/network.h"
 #include "services/settings.h"
@@ -27,6 +28,7 @@ typedef enum {
     SCREEN_NTP,
     SCREEN_IP_EDIT,
     SCREEN_CAN_MONITOR,
+    SCREEN_RTC_TRIM,
 } ui_screen_t;
 static ui_screen_t s_current_screen = SCREEN_MAIN;
 
@@ -102,6 +104,12 @@ static lv_obj_t *s_brightness_label = NULL;
 static lv_obj_t *s_brightness_bar   = NULL;
 static int       s_brightness_pct   = 100;
 
+// RTC trim screen widgets + data
+static lv_obj_t *s_rtc_trim_scr   = NULL;
+static lv_obj_t *s_rtc_trim_label = NULL;
+static lv_obj_t *s_rtc_trim_bar   = NULL;
+static int       s_rtc_trim       = 0;
+
 // Network screen widgets
 static lv_obj_t *s_network_scr    = NULL;
 static lv_obj_t *s_net_mode_btn   = NULL;
@@ -134,6 +142,7 @@ static int     s_rate_idx_saved;
 static int     s_ntp_rate_idx_saved;
 static int     s_dst_idx_saved;
 static int     s_tz_idx_saved;
+static int     s_rtc_trim_saved;
 
 // NTP picker screen widgets + data
 static lv_obj_t *s_ntp_scr        = NULL;
@@ -161,6 +170,8 @@ static lv_obj_t *s_can_scr  = NULL;
 static lv_obj_t *s_can_cont = NULL;
 static lv_obj_t *s_can_log  = NULL;
 static char      s_can_log_text[CAN_MON_LOG_SIZE * CAN_MON_LINE_MAX];
+// true: auto-scroll to bottom on every refresh; false: user is browsing history
+static bool      s_can_follow = true;
 
 // IP edit state
 static ip_field_t s_ip_field = IP_FIELD_IP;
@@ -215,6 +226,22 @@ static void brightness_step(int dir)
     if (s_brightness_pct < 20)  s_brightness_pct = 20;
     if (s_brightness_pct > 100) s_brightness_pct = 100;
     brightness_refresh();
+}
+
+static void rtc_trim_refresh(void)
+{
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%+d", s_rtc_trim);
+    lv_label_set_text(s_rtc_trim_label, buf);
+    lv_bar_set_value(s_rtc_trim_bar, s_rtc_trim, LV_ANIM_OFF);
+}
+
+static void rtc_trim_step(int dir)
+{
+    s_rtc_trim += dir;
+    if (s_rtc_trim < -128) s_rtc_trim = -128;
+    if (s_rtc_trim >  127) s_rtc_trim =  127;
+    rtc_trim_refresh();
 }
 
 static void update_rate_step(int dir)
@@ -287,6 +314,7 @@ static void ui_show_ntp_update_rate(void);
 static void ui_show_dst(void);
 static void ui_show_timezone(void);
 static void ui_show_brightness(void);
+static void ui_show_rtc_trim(void);
 static void ui_open_network(void);
 static void ui_show_network(void);
 static void ui_open_ntp(void);
@@ -430,6 +458,7 @@ static void save_settings(void)
         .ntp_rate_idx   = s_ntp_rate_idx,
         .dst_idx        = s_dst_idx,
         .tz_idx         = s_tz_idx,
+        .rtc_trim       = (int8_t)s_rtc_trim,
     };
     memcpy(s.net_ip,   s_net_ip,   4);
     memcpy(s.net_mask, s_net_mask, 4);
@@ -510,6 +539,7 @@ static void on_settings_select(lv_event_t *e)
     if (idx == 1) ui_show_ntp_update_rate();
     if (idx == 2) ui_show_dst();
     if (idx == 3) ui_show_timezone();
+    if (idx == 4) ui_show_rtc_trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +644,13 @@ static void build_settings_screen(void)
     lv_obj_set_style_text_font(tz_btn, &lv_font_montserrat_20, 0);
     lv_group_add_obj(s_settings_group, tz_btn);
     lv_obj_add_event_cb(tz_btn, on_settings_select, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *trim_btn = lv_list_add_button(list, LV_SYMBOL_SETTINGS, "RTC Trim");
+    lv_obj_set_height(trim_btn, LV_PCT(30));
+    lv_obj_set_user_data(trim_btn, (void *)(intptr_t)4);
+    lv_obj_set_style_text_font(trim_btn, &lv_font_montserrat_20, 0);
+    lv_group_add_obj(s_settings_group, trim_btn);
+    lv_obj_add_event_cb(trim_btn, on_settings_select, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *back_btn = lv_list_add_button(list, LV_SYMBOL_LEFT, "Back");
     lv_obj_set_height(back_btn, LV_PCT(30));
@@ -759,6 +796,31 @@ static void build_brightness_screen(void)
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -4);
 }
 
+static void build_rtc_trim_screen(void)
+{
+    s_rtc_trim_scr = lv_obj_create(NULL);
+
+    lv_obj_t *title = lv_label_create(s_rtc_trim_scr);
+    lv_label_set_text(title, "RTC Trim");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    s_rtc_trim_label = lv_label_create(s_rtc_trim_scr);
+    lv_obj_set_style_text_font(s_rtc_trim_label, &lv_font_montserrat_20, 0);
+    lv_obj_align(s_rtc_trim_label, LV_ALIGN_CENTER, 0, -14);
+
+    s_rtc_trim_bar = lv_bar_create(s_rtc_trim_scr);
+    lv_obj_set_size(s_rtc_trim_bar, 280, 20);
+    lv_bar_set_mode(s_rtc_trim_bar, LV_BAR_MODE_SYMMETRICAL);
+    lv_bar_set_range(s_rtc_trim_bar, -128, 127);
+    lv_obj_align(s_rtc_trim_bar, LV_ALIGN_CENTER, 0, 18);
+
+    lv_obj_t *hint = lv_label_create(s_rtc_trim_scr);
+    lv_label_set_text(hint, "Click: apply  Hold: cancel");
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -4);
+
+    rtc_trim_refresh();
+}
+
 static void build_network_screen(void)
 {
     s_network_scr = lv_obj_create(NULL);
@@ -869,10 +931,19 @@ static void build_ip_edit_screen(void)
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -4);
 }
 
+static void can_monitor_poll_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_current_screen != SCREEN_CAN_MONITOR) return;
+    if (!s_can_follow) return;
+    if (!can_mon_has_new_data()) return;
+    can_monitor_refresh();
+}
+
 static void can_monitor_refresh(void)
 {
     if (s_current_screen != SCREEN_CAN_MONITOR) return;
-    if (lv_obj_get_scroll_bottom(s_can_cont) > 0) return;
+    if (!s_can_follow) return;
 
     int offset = ui_get_tz_offset_hours() + (ui_get_dst_mode() == 1 ? 1 : 0);
     can_mon_snapshot(s_can_log_text, sizeof(s_can_log_text), offset);
@@ -1006,6 +1077,16 @@ static void ui_show_brightness(void)
     lv_screen_load(s_brightness_scr);
 }
 
+static void ui_show_rtc_trim(void)
+{
+    s_rtc_trim_saved = s_rtc_trim;
+    s_enc_accum = 0;
+    s_current_screen = SCREEN_RTC_TRIM;
+    lv_indev_set_group(s_enc_indev, s_empty_group);
+    rtc_trim_refresh();
+    lv_screen_load(s_rtc_trim_scr);
+}
+
 static void ui_open_network(void)
 {
     s_net_dhcp_saved = s_net_dhcp;
@@ -1055,7 +1136,8 @@ static void ui_open_ip_edit(ip_field_t field)
 
 static void ui_open_can_monitor(void)
 {
-    s_enc_accum = 0;
+    s_enc_accum  = 0;
+    s_can_follow = true;
     s_current_screen = SCREEN_CAN_MONITOR;
     lv_indev_set_group(s_enc_indev, s_empty_group);
     can_monitor_refresh();
@@ -1137,6 +1219,16 @@ void ui_encoder_event(void *arg)
         }
         break;
 
+    case SCREEN_RTC_TRIM:
+        if      (step != 0)               rtc_trim_step(step);
+        else if (event == ENCODER_CLICK) { ui_show_settings(); save_settings(); }
+        else if (event == ENCODER_LONG) {
+            s_rtc_trim = s_rtc_trim_saved;
+            rtc_trim_refresh();
+            ui_show_settings();
+        }
+        break;
+
     case SCREEN_NETWORK:
         if      (step != 0)              group_nav(s_network_group, step);
         else if (event == ENCODER_CLICK) group_click(s_network_group);
@@ -1168,15 +1260,17 @@ void ui_encoder_event(void *arg)
 
     case SCREEN_CAN_MONITOR:
         if (event == ENCODER_CW) {
+            s_can_follow = false;
             lv_obj_scroll_by(s_can_cont, 0, -8, LV_ANIM_OFF);
         } else if (event == ENCODER_CCW) {
+            s_can_follow = false;
             lv_obj_scroll_by(s_can_cont, 0, 8, LV_ANIM_OFF);
         } else if (event == ENCODER_CLICK) {
-            can_mon_push_separator();
-            lv_obj_scroll_to_y(s_can_cont, 100000, LV_ANIM_OFF);
+            s_can_follow = true;
+            can_mon_push_separator_from_ui();
             can_monitor_refresh();
         } else if (event == ENCODER_LONG) {
-            ui_show_menu();
+            ui_open_menu();
         }
         break;
     }
@@ -1195,6 +1289,7 @@ esp_err_t ui_init(lv_indev_t *encoder_indev, const settings_t *s)
     s_dst_idx        = s->dst_idx;
     s_tz_idx         = s->tz_idx;
     s_brightness_pct = s->brightness_pct;
+    s_rtc_trim       = s->rtc_trim;
     s_net_dhcp       = s->net_dhcp;
     memcpy(s_net_ip,   s->net_ip,   4);
     memcpy(s_net_mask, s->net_mask, 4);
@@ -1222,15 +1317,19 @@ esp_err_t ui_init(lv_indev_t *encoder_indev, const settings_t *s)
     build_dst_screen();
     build_timezone_screen();
     build_brightness_screen();
+    build_rtc_trim_screen();
     build_network_screen();
     build_ntp_screen();
     build_ip_edit_screen();
     build_can_monitor_screen();
-    can_mon_set_notify(can_monitor_refresh);
+    lv_timer_create(can_monitor_poll_cb, 100, NULL);
 
     s_current_screen = SCREEN_MAIN;
     lv_indev_set_group(s_enc_indev, s_empty_group);
     lv_screen_load(s_main_scr);
+
+    // Signal clock_task that all LVGL widgets are built and ui_set_* calls are safe
+    clock_notify_ui_ready();
 
     ESP_LOGI(TAG, "ready");
     return ESP_OK;
@@ -1264,6 +1363,11 @@ int ui_get_dst_mode(void)
 int ui_get_tz_offset_hours(void)
 {
     return s_tz_idx - 12;  // idx 0 = UTC-12, idx 12 = UTC, idx 24 = UTC+12
+}
+
+int8_t ui_get_rtc_trim(void)
+{
+    return (int8_t)s_rtc_trim;
 }
 
 void ui_get_net_config(ui_net_config_t *out)

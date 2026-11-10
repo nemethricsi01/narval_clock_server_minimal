@@ -21,6 +21,7 @@ typedef struct {
     // Time
     int     dst_idx;        // 0=Winter, 1=Summer, 2=Auto
     int     tz_idx;         // 0=UTC-12 … 12=UTC … 24=UTC+12
+    int8_t  rtc_trim;       // DS3231 aging offset register, -128..+127
 } settings_t;
 
 // Defaults: DHCP, UTC+1, DST auto, CAN 1 s, NTP 5 min, brightness 100%, pool.ntp.org
@@ -36,6 +37,7 @@ typedef struct {
     .ntp_rate_idx   = 0,                 \
     .dst_idx        = 2,                 \
     .tz_idx         = 13,                \
+    .rtc_trim       = 0,                 \
 })
 
 esp_err_t settings_load(settings_t *s);

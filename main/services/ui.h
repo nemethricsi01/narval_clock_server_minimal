@@ -63,6 +63,9 @@ int ui_get_dst_mode(void);
 /** Returns the UTC timezone offset in hours: -12 to +12. */
 int ui_get_tz_offset_hours(void);
 
+/** Returns the DS3231 aging offset: -128..+127 (one LSB ≈ 0.1 ppm at 25°C). */
+int8_t ui_get_rtc_trim(void);
+
 /**
  * Network configuration as set by the user via the Network screen.
  * Read after the user presses Apply (ui_net_config_t.applied will be true).

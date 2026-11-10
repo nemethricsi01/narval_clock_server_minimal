@@ -34,7 +34,7 @@ esp_err_t lcd_st7789_init(esp_lcd_panel_handle_t *out_panel,
 
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = BOARD_PIN_LCD_RST,
-        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_BGR,
+        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_RGB,
         .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(*out_io, &panel_cfg, out_panel));
