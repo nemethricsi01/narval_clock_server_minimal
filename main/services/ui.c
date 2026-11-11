@@ -477,11 +477,11 @@ static void on_settings_back(lv_event_t *e) { ui_show_menu(); }
 // Call from the LVGL task or with display_lock() held.
 static void show_network_status(void)
 {
-    if (!network_is_connected()) return;
+    bool up = network_is_connected();
     char label[24];
-    snprintf(label, sizeof(label), "IP:%s", network_get_ip_str());
-    ui_set_ip(label);
-    ui_set_connection_state(UI_CONN_LAN);
+    if (up) snprintf(label, sizeof(label), "IP:%s", network_get_ip_str());
+    ui_set_ip(up ? label : "IP: --");
+    ui_set_connection_state(up ? UI_CONN_LAN : UI_CONN_DISCONNECTED);
 }
 
 static void on_net_apply(lv_event_t *e)
@@ -1420,7 +1420,7 @@ void ui_show_init_errors(bool eth_failed, bool rtc_failed)
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 26);
 
     // Don't leave placeholder values that look like real data next to the error.
-    if (eth_failed) ui_set_ip("IP: --");
+    // (The IP label already shows "IP: --": ui_init() ran show_network_status().)
     if (rtc_failed) {
         ui_set_time("--:--:--");
         ui_set_date("----/--/--");
