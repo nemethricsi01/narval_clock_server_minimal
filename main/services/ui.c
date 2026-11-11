@@ -64,10 +64,12 @@ static lv_obj_t *s_first_settings_btn = NULL;
 static lv_obj_t *s_update_rate_scr    = NULL;
 static lv_obj_t *s_update_rate_roller = NULL;
 
+// 0 = "Never": no CAN time broadcast. New entries go at the end so saved indices keep their meaning.
 static const uint32_t s_rate_values[] = {
-    1, 60, 120, 300, 600, 1800, 3600, 14400, 43200, 86400,
+    1, 60, 120, 300, 600, 1800, 3600, 14400, 43200, 86400, 0,
 };
 #define RATE_COUNT  ((int)(sizeof(s_rate_values) / sizeof(s_rate_values[0])))
+_Static_assert(RATE_COUNT == SETTINGS_CAN_RATE_COUNT, "update SETTINGS_CAN_RATE_COUNT in settings.h");
 static int s_rate_idx = 1;
 
 // NTP update-rate picker widgets + data
@@ -682,7 +684,7 @@ static void build_update_rate_screen(void)
 
     s_update_rate_roller = lv_roller_create(s_update_rate_scr);
     lv_roller_set_options(s_update_rate_roller,
-        "1 sec\n1 min\n2 min\n5 min\n10 min\n30 min\n1 hour\n4 hours\n12 hours\n24 hours",
+        "1 sec\n1 min\n2 min\n5 min\n10 min\n30 min\n1 hour\n4 hours\n12 hours\n24 hours\nNever",
         LV_ROLLER_MODE_NORMAL);
     lv_obj_set_style_text_font(s_update_rate_roller, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_line_space(s_update_rate_roller, 2, LV_PART_MAIN);

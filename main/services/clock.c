@@ -234,13 +234,16 @@ static void clock_task(void *arg)
 
         struct tm local = utc_to_local(&utc, tz_offset, dst_mode);
 
-        if (can_ticks == 0) {
-            if (send_can_datetime(&local)) {
-                s_can_sync_utc = utc_ts;
+        // Rate 0 is "Never": the CAN time broadcast is switched off.
+        if (cur_can_rate != 0) {
+            if (can_ticks == 0) {
+                if (send_can_datetime(&local)) {
+                    s_can_sync_utc = utc_ts;
+                }
+                can_ticks = cur_can_rate - 1;
+            } else {
+                can_ticks--;
             }
-            can_ticks = (cur_can_rate > 1) ? cur_can_rate - 1 : 0;
-        } else {
-            can_ticks--;
         }
 
         char time_str[16], date_str[40], ntp_str[16], can_str[16];
@@ -260,7 +263,9 @@ static void clock_task(void *arg)
             strcpy(ntp_str, "--:--:--");
         }
 
-        if (s_can_sync_utc != 0) {
+        if (cur_can_rate == 0) {
+            strcpy(can_str, "off");
+        } else if (s_can_sync_utc != 0) {
             gmtime_r((const time_t *)&s_can_sync_utc, &tmp_utc_tm);
             struct tm can_local = utc_to_local(&tmp_utc_tm, tz_offset, dst_mode);
             snprintf(can_str, sizeof(can_str), "%02d:%02d:%02d",

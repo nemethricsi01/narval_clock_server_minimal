@@ -15,7 +15,7 @@ typedef struct {
     // Display
     int     brightness_pct;
     // CAN
-    int     rate_idx;
+    int     rate_idx;       // index into ui.c's CAN rate list; last entry = Never
     // NTP
     int     ntp_rate_idx;
     // Time
@@ -23,6 +23,8 @@ typedef struct {
     int     tz_idx;         // 0=UTC-12 … 12=UTC … 24=UTC+12
     int8_t  rtc_trim;       // DS3231 aging offset register, -128..+127
 } settings_t;
+
+#define SETTINGS_CAN_RATE_COUNT 11   // entries in ui.c's CAN rate list (checked there)
 
 // Defaults: DHCP, UTC+1, DST auto, CAN 1 s, NTP 5 min, brightness 100%, pool.ntp.org
 #define SETTINGS_DEFAULT ((settings_t){  \

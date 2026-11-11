@@ -30,7 +30,7 @@ esp_err_t settings_load(settings_t *s)
     if (nvs_get_u8(h, "ntp_idx",      &v) == ESP_OK) s->ntp_idx        = v < 5  ? v : 0;
     len = 4; nvs_get_blob(h, "ntp_ip",   s->ntp_ip,   &len);
     if (nvs_get_u8(h, "brightness",   &v) == ESP_OK) s->brightness_pct = (v >= 20 && v <= 100) ? v : 100;
-    if (nvs_get_u8(h, "rate_idx",     &v) == ESP_OK) s->rate_idx       = v < 10 ? v : 1;
+    if (nvs_get_u8(h, "rate_idx",     &v) == ESP_OK) s->rate_idx       = v < SETTINGS_CAN_RATE_COUNT ? v : SETTINGS_DEFAULT.rate_idx;
     if (nvs_get_u8(h, "ntp_rate_idx", &v) == ESP_OK) s->ntp_rate_idx   = v < 5  ? v : 0;
     if (nvs_get_u8(h, "dst_idx",      &v) == ESP_OK) s->dst_idx        = v <= 2 ? v : 0;
     if (nvs_get_u8(h, "tz_idx",       &v) == ESP_OK) s->tz_idx         = v <= 24 ? v : 12;
