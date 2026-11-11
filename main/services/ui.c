@@ -961,6 +961,9 @@ static void can_monitor_refresh(void)
     can_mon_snapshot(s_can_log_text, sizeof(s_can_log_text), offset);
     lv_label_set_text_static(s_can_log,
                              s_can_log_text[0] ? s_can_log_text : "Waiting for CAN frames...");
+    // Recompute the container's content height for the new text first;
+    // otherwise the scroll stops at the old bottom and hides the newest lines.
+    lv_obj_update_layout(s_can_cont);
     lv_obj_scroll_to_y(s_can_cont, 100000, LV_ANIM_OFF);
 }
 

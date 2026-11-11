@@ -59,14 +59,17 @@ static void decode_led_layer(char *buf, size_t len, const char *label, const uin
     snprintf(buf, len, "%s:%s", label, tmp);
 }
 
+// LED-layer frames (0x30-0x3F): data[0] = device addr - 1, data[1] = LedBuff[1],
+// data[2] = LedBuff[0], data[3] = layer (0x30 + (base_addr - 128) / 8).
+// Prints LedBuff[0] first, then LedBuff[1]. Ported from narval_videomtx.
 static void decode_remote_led_layer(char *buf, size_t len, const char *label, const uint8_t *data)
 {
     static const char c[4] = {'0', 'Z', 'P', 'S'};
     char tmp[12];
     int  off = 0;
-    for (int i = 2; i < 4; i++) {
+    for (int i = 2; i >= 1; i--) {
         for (int j = 0; j < 4; j++) tmp[off++] = c[(data[i] >> (j * 2)) & 0x3];
-        if (i != 3) tmp[off++] = '_';
+        if (i != 1) tmp[off++] = '_';
     }
     tmp[off] = '\0';
     snprintf(buf, len, "%s #%d:%s", label, data[0], tmp);
@@ -242,21 +245,22 @@ static void format_line(const can_mon_entry_t *e, char *buf, size_t len, int loc
             break;
         }
 
-        case 0x30: decode_led_layer       (decoded, sizeof(decoded), "RL1-12",    d); break;
-        case 0x31: decode_remote_led_layer(decoded, sizeof(decoded), "RL13-24",   d); break;
-        case 0x32: decode_remote_led_layer(decoded, sizeof(decoded), "RL25-36",   d); break;
-        case 0x33: decode_remote_led_layer(decoded, sizeof(decoded), "RL37-49",   d); break;
-        case 0x34: decode_remote_led_layer(decoded, sizeof(decoded), "RL50-61",   d); break;
-        case 0x35: decode_remote_led_layer(decoded, sizeof(decoded), "RL62-73",   d); break;
-        case 0x36: decode_remote_led_layer(decoded, sizeof(decoded), "RL74-85",   d); break;
-        case 0x37: decode_remote_led_layer(decoded, sizeof(decoded), "RL86-97",   d); break;
-        case 0x39: decode_remote_led_layer(decoded, sizeof(decoded), "RL98-109",  d); break;
-        case 0x3A: decode_remote_led_layer(decoded, sizeof(decoded), "RL110-121", d); break;
-        case 0x3B: decode_remote_led_layer(decoded, sizeof(decoded), "RL122-133", d); break;
-        case 0x3C: decode_remote_led_layer(decoded, sizeof(decoded), "RL134-145", d); break;
-        case 0x3D: decode_remote_led_layer(decoded, sizeof(decoded), "RL146-157", d); break;
-        case 0x3E: decode_remote_led_layer(decoded, sizeof(decoded), "RL158-169", d); break;
-        case 0x3F: decode_remote_led_layer(decoded, sizeof(decoded), "RL170-181", d); break;
+        case 0x30: decode_remote_led_layer(decoded, sizeof(decoded), "AL129-136", d); break;
+        case 0x31: decode_remote_led_layer(decoded, sizeof(decoded), "AL137-144", d); break;
+        case 0x32: decode_remote_led_layer(decoded, sizeof(decoded), "AL145-152", d); break;
+        case 0x33: decode_remote_led_layer(decoded, sizeof(decoded), "AL153-160", d); break;
+        case 0x34: decode_remote_led_layer(decoded, sizeof(decoded), "AL161-168", d); break;
+        case 0x35: decode_remote_led_layer(decoded, sizeof(decoded), "AL169-176", d); break;
+        case 0x36: decode_remote_led_layer(decoded, sizeof(decoded), "AL177-184", d); break;
+        case 0x37: decode_remote_led_layer(decoded, sizeof(decoded), "AL185-192", d); break;
+        case 0x38: decode_remote_led_layer(decoded, sizeof(decoded), "AL193-200", d); break;
+        case 0x39: decode_remote_led_layer(decoded, sizeof(decoded), "AL201-208", d); break;
+        case 0x3A: decode_remote_led_layer(decoded, sizeof(decoded), "AL209-216", d); break;
+        case 0x3B: decode_remote_led_layer(decoded, sizeof(decoded), "AL217-224", d); break;
+        case 0x3C: decode_remote_led_layer(decoded, sizeof(decoded), "AL225-232", d); break;
+        case 0x3D: decode_remote_led_layer(decoded, sizeof(decoded), "AL233-240", d); break;
+        case 0x3E: decode_remote_led_layer(decoded, sizeof(decoded), "AL241-248", d); break;
+        case 0x3F: decode_remote_led_layer(decoded, sizeof(decoded), "AL249-256", d); break;
 
         case 0xFF:
             snprintf(decoded, sizeof(decoded), "RESET node:%d", d[1]);
