@@ -12,6 +12,7 @@
 static const char *TAG = "network";
 
 static esp_netif_t *s_eth_netif = NULL;
+static bool          s_eth_ready = false;   // set once network_init() fully succeeded
 static volatile bool s_connected = false;
 static char          s_ip_str[16] = "";
 
@@ -51,17 +52,24 @@ static void on_got_ip(void *arg, esp_event_base_t base, int32_t id, void *data)
 
 esp_err_t network_init(void)
 {
+    // Errors are returned, not ESP_ERROR_CHECKed: a missing W5500 must not
+    // reboot-loop the device. The caller shows the failure on screen.
     esp_eth_handle_t eth_handle = NULL;
-    ESP_ERROR_CHECK(eth_w5500_init(&eth_handle));
+    ESP_RETURN_ON_ERROR(eth_w5500_init(&eth_handle), TAG, "W5500 init failed");
 
     esp_netif_config_t netif_cfg = ESP_NETIF_DEFAULT_ETH();
     s_eth_netif = esp_netif_new(&netif_cfg);
-    ESP_ERROR_CHECK(esp_netif_attach(s_eth_netif, esp_eth_new_netif_glue(eth_handle)));
+    ESP_RETURN_ON_FALSE(s_eth_netif, ESP_ERR_NO_MEM, TAG, "esp_netif_new failed");
+    ESP_RETURN_ON_ERROR(esp_netif_attach(s_eth_netif, esp_eth_new_netif_glue(eth_handle)),
+                        TAG, "esp_netif_attach failed");
 
-    ESP_ERROR_CHECK(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, on_eth_event, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, on_got_ip, NULL));
+    ESP_RETURN_ON_ERROR(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, on_eth_event, NULL),
+                        TAG, "ETH event register failed");
+    ESP_RETURN_ON_ERROR(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, on_got_ip, NULL),
+                        TAG, "IP event register failed");
 
-    ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+    ESP_RETURN_ON_ERROR(esp_eth_start(eth_handle), TAG, "esp_eth_start failed");
+    s_eth_ready = true;
     return ESP_OK;
 }
 
@@ -77,6 +85,8 @@ const char *network_get_ip_str(void)
 
 esp_err_t network_apply_ip(const network_ip_cfg_t *cfg)
 {
+    if (!s_eth_ready) return ESP_ERR_INVALID_STATE;   // Ethernet failed to init
+
     if (cfg->dhcp) {
         // DHCP is already started by default; restart it in case it was stopped.
         esp_err_t ret = esp_netif_dhcpc_start(s_eth_netif);

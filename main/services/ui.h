@@ -29,6 +29,12 @@ void ui_show_main(void);
  */
 void ui_encoder_event(void *event_as_ptr);
 
+/**
+ * Show a red "... init failed" line on the main screen for hardware that
+ * failed to initialise. Call after ui_init(), inside display_lock().
+ */
+void ui_show_init_errors(bool eth_failed, bool rtc_failed);
+
 /* ---------- live-data update functions ---------- */
 void ui_set_ip(const char *ip);
 void ui_set_time(const char *time_str);

@@ -1404,6 +1404,29 @@ void ui_set_ip(const char *ip)  { if (s_ip_label) lv_label_set_text(s_ip_label, 
 void ui_set_time(const char *t) { lv_label_set_text(s_time_label, t);  }
 void ui_set_date(const char *d) { lv_label_set_text(s_date_label, d);  }
 
+void ui_show_init_errors(bool eth_failed, bool rtc_failed)
+{
+    if (!eth_failed && !rtc_failed) return;
+
+    const char *msg = (eth_failed && rtc_failed) ? "W5500 (LAN) + DS3231 (RTC) init failed"
+                    : eth_failed                 ? "W5500 (LAN) init failed"
+                    :                              "DS3231 (RTC) init failed";
+
+    // Red line between the top status labels and the clock.
+    lv_obj_t *lbl = lv_label_create(s_main_scr);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl, lv_palette_main(LV_PALETTE_RED), 0);
+    lv_label_set_text(lbl, msg);
+    lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 26);
+
+    // Don't leave placeholder values that look like real data next to the error.
+    if (eth_failed) ui_set_ip("IP: --");
+    if (rtc_failed) {
+        ui_set_time("--:--:--");
+        ui_set_date("----/--/--");
+    }
+}
+
 void ui_set_last_sync(const char *ntp_time, const char *can_time)
 {
     if (!s_last_sync_label) return;

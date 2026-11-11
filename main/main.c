@@ -4,6 +4,7 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "lvgl.h"
+#include "esp_log.h"
 #include <string.h>
 
 #include "services/settings.h"
@@ -15,6 +16,8 @@
 #include "services/clock.h"
 #include "drivers/twai_can.h"
 #include "drivers/encoder.h"
+
+static const char *TAG = "main";
 
 // ---------------------------------------------------------------------------
 // Encoder → LVGL bridge
@@ -58,10 +61,15 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    ESP_ERROR_CHECK(network_init());
+    // A missing W5500 or DS3231 must not reboot-loop the device: log the error,
+    // keep going without that chip, and show it on screen once the UI is up.
+    esp_err_t eth_err = network_init();
+    if (eth_err != ESP_OK) {
+        ESP_LOGE(TAG, "Ethernet unavailable (%s), continuing without it", esp_err_to_name(eth_err));
+    }
 
     // Apply static IP immediately if configured; DHCP is already the netif default.
-    if (!cfg.net_dhcp) {
+    if (eth_err == ESP_OK && !cfg.net_dhcp) {
         network_ip_cfg_t net_cfg = { .dhcp = false };
         memcpy(net_cfg.ip,   cfg.net_ip,   4);
         memcpy(net_cfg.mask, cfg.net_mask, 4);
@@ -75,7 +83,12 @@ void app_main(void)
     ESP_ERROR_CHECK(twai_can_init(&can_node));
     ESP_ERROR_CHECK(can_service_init(can_node));
 
-    ESP_ERROR_CHECK(clock_service_init());
+    // The clock task is driven by the DS3231's 1 Hz output, so without the RTC
+    // there is no clock, NTP or CAN time broadcast; the UI still works.
+    esp_err_t rtc_err = clock_service_init();
+    if (rtc_err != ESP_OK) {
+        ESP_LOGE(TAG, "RTC unavailable (%s), clock disabled", esp_err_to_name(rtc_err));
+    }
 
     ESP_ERROR_CHECK(encoder_init(on_encoder_event, NULL));
 
@@ -89,6 +102,7 @@ void app_main(void)
     lv_indev_set_read_cb(enc_indev, encoder_read_cb);
 
     ESP_ERROR_CHECK(ui_init(enc_indev, &cfg));
+    ui_show_init_errors(eth_err != ESP_OK, rtc_err != ESP_OK);
 
     display_unlock();
 }

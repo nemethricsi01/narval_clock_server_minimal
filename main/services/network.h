@@ -7,6 +7,8 @@
 /**
  * Initialise networking: attaches the W5500 to lwIP, registers event
  * handlers, and starts the Ethernet driver (DHCP by default).
+ * Returns an error (instead of aborting) if the W5500 is missing or fails;
+ * the rest of the device keeps working without Ethernet.
  */
 esp_err_t network_init(void);
 
