@@ -19,7 +19,8 @@ const char *network_get_ip_str(void);
 /**
  * Switch between DHCP and static IP at runtime.
  * For static IP, also sets the IP/mask/GW and marks the link as connected.
- * Safe to call after network_init(); may be called from any task.
+ * Safe to call after network_init(); may be called from any task, including
+ * the LVGL task. It doesn't update the UI: the caller refreshes the screen.
  */
 typedef struct {
     bool    dhcp;

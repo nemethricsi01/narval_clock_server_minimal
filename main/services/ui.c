@@ -473,6 +473,17 @@ static void save_settings(void)
 
 static void on_menu_exit(lv_event_t *e)     { ui_show_main(); }
 static void on_settings_back(lv_event_t *e) { ui_show_menu(); }
+// Show the current IP and connection state on the main screen.
+// Call from the LVGL task or with display_lock() held.
+static void show_network_status(void)
+{
+    if (!network_is_connected()) return;
+    char label[24];
+    snprintf(label, sizeof(label), "IP:%s", network_get_ip_str());
+    ui_set_ip(label);
+    ui_set_connection_state(UI_CONN_LAN);
+}
+
 static void on_net_apply(lv_event_t *e)
 {
     s_net_applied = true;
@@ -481,6 +492,7 @@ static void on_net_apply(lv_event_t *e)
     memcpy(net_cfg.mask, s_net_mask, 4);
     memcpy(net_cfg.gw,   s_net_gw,   4);
     network_apply_ip(&net_cfg);
+    show_network_status();   // already in the LVGL task, no display_lock() needed
     save_settings();
     ui_show_menu();
 }
@@ -1328,6 +1340,9 @@ esp_err_t ui_init(lv_indev_t *encoder_indev, const settings_t *s)
     lv_indev_set_group(s_enc_indev, s_empty_group);
     lv_screen_load(s_main_scr);
 
+    // A static IP is applied in app_main before the UI exists, so show it now.
+    show_network_status();
+
     // Signal clock_task that all LVGL widgets are built and ui_set_* calls are safe
     clock_notify_ui_ready();
 
@@ -1381,7 +1396,8 @@ void ui_get_net_config(ui_net_config_t *out)
     out->applied = s_net_applied;
 }
 
-void ui_set_ip(const char *ip)  { lv_label_set_text(s_ip_label,   ip); }
+// Guarded: the network "got IP" event can fire before ui_init() builds the label.
+void ui_set_ip(const char *ip)  { if (s_ip_label) lv_label_set_text(s_ip_label, ip); }
 void ui_set_time(const char *t) { lv_label_set_text(s_time_label, t);  }
 void ui_set_date(const char *d) { lv_label_set_text(s_date_label, d);  }
 

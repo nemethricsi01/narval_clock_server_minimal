@@ -95,13 +95,9 @@ esp_err_t network_apply_ip(const network_ip_cfg_t *cfg)
                  cfg->ip[0], cfg->ip[1], cfg->ip[2], cfg->ip[3]);
         s_connected = true;
         ESP_LOGI(TAG, "static IP: %s", s_ip_str);
-
-        char label[24];
-        snprintf(label, sizeof(label), "IP:%s", s_ip_str);
-        display_lock();
-        ui_set_ip(label);
-        ui_set_connection_state(UI_CONN_LAN);
-        display_unlock();
+        // No UI calls here: Network > Apply calls this from the LVGL task, which
+        // already holds the display lock, so taking it again would deadlock.
+        // Callers update the screen themselves.
     }
     return ESP_OK;
 }

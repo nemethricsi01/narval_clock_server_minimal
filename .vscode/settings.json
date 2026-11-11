@@ -14,5 +14,6 @@
     "--compile-commands-dir=d:\\esp32_projektek\\Narval\\narval_clock_server_minimal\\build"
   ],
   "idf.flashType": "UART",
-  "idf.portWin": "COM5"
+  "idf.portWin": "COM5",
+  "idf.port": "COM59"
 }
