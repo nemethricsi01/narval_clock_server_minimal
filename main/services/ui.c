@@ -449,6 +449,42 @@ static void ntp_confirm(void)
 }
 
 // ---------------------------------------------------------------------------
+// Notice — a red message over whatever screen is showing, hidden after a while
+// ---------------------------------------------------------------------------
+
+#define NOTICE_MS  4000
+
+static lv_obj_t   *s_notice       = NULL;
+static lv_timer_t *s_notice_timer = NULL;
+
+static void notice_hide_cb(lv_timer_t *t)
+{
+    lv_obj_add_flag(s_notice, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_pause(t);
+}
+
+static void show_notice(const char *msg)
+{
+    if (!s_notice) {
+        // The top layer stays visible across screen changes.
+        s_notice = lv_label_create(lv_layer_top());
+        lv_obj_set_style_text_font(s_notice, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(s_notice, lv_color_white(), 0);
+        lv_obj_set_style_text_align(s_notice, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_bg_color(s_notice, lv_palette_main(LV_PALETTE_RED), 0);
+        lv_obj_set_style_bg_opa(s_notice, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(s_notice, 6, 0);
+        lv_obj_set_style_radius(s_notice, 4, 0);
+        lv_obj_align(s_notice, LV_ALIGN_CENTER, 0, 0);
+        s_notice_timer = lv_timer_create(notice_hide_cb, NOTICE_MS, NULL);
+    }
+    lv_label_set_text(s_notice, msg);
+    lv_obj_remove_flag(s_notice, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_reset(s_notice_timer);
+    lv_timer_resume(s_notice_timer);
+}
+
+// ---------------------------------------------------------------------------
 // Persist all current settings to NVS
 // ---------------------------------------------------------------------------
 
@@ -468,7 +504,14 @@ static void save_settings(void)
     memcpy(s.net_mask, s_net_mask, 4);
     memcpy(s.net_gw,   s_net_gw,   4);
     memcpy(s.ntp_ip,   s_ntp_ip,   4);
-    settings_save(&s);
+
+    // The change still applies until the next reboot; tell the user it won't last.
+    esp_err_t err = settings_save(&s);
+    if (err != ESP_OK) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Settings NOT saved\n%s", esp_err_to_name(err));
+        show_notice(msg);
+    }
 }
 
 // ---------------------------------------------------------------------------
