@@ -13,6 +13,7 @@ idf_component_register(
         "services/clock.c"
         "services/settings.c"
         "services/usb_bridge.c"
+        "services/discovery.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_lcd driver esp_timer freertos esp_system

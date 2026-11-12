@@ -4,6 +4,7 @@
 #include "services/network.h"
 #include "services/settings.h"
 #include "services/can_monitor.h"
+#include "services/discovery.h"
 #include "drivers/encoder.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -29,6 +30,7 @@ typedef enum {
     SCREEN_IP_EDIT,
     SCREEN_CAN_MONITOR,
     SCREEN_RTC_TRIM,
+    SCREEN_DISCOVERY,
 } ui_screen_t;
 static ui_screen_t s_current_screen = SCREEN_MAIN;
 
@@ -173,6 +175,12 @@ static lv_obj_t *s_can_scr  = NULL;
 static lv_obj_t *s_can_cont = NULL;
 static lv_obj_t *s_can_log  = NULL;
 static char      s_can_log_text[CAN_MON_LOG_SIZE * CAN_MON_LINE_MAX];
+
+// Find devices screen (PIC32 boards with the Announce service, see discovery.h)
+static lv_obj_t *s_disc_scr  = NULL;
+static lv_obj_t *s_disc_cont = NULL;
+static lv_obj_t *s_disc_log  = NULL;
+static char      s_disc_text[2048];
 // true: auto-scroll to bottom on every refresh; false: user is browsing history
 static bool      s_can_follow = true;
 
@@ -324,6 +332,7 @@ static void ui_show_network(void);
 static void ui_open_ntp(void);
 static void ui_open_ip_edit(ip_field_t field);
 static void ui_open_can_monitor(void);
+static void ui_open_discovery(void);
 
 // ---------------------------------------------------------------------------
 // Network screen helpers
@@ -575,6 +584,7 @@ static void on_menu_select(lv_event_t *e)
     case 1: ui_show_brightness(); break;
     case 2: ui_open_network(); break;
     case 3: ui_open_can_monitor(); break;
+    case 4: ui_open_discovery(); break;
     default: {
         const char *text = lv_list_get_button_text(lv_obj_get_parent(btn), btn);
         lv_label_set_text(s_status_label, text);
@@ -588,6 +598,7 @@ static const char *s_menu_items[] = {
     LV_SYMBOL_IMAGE    " Display",
     LV_SYMBOL_WIFI     " Network",
     LV_SYMBOL_WARNING  " CAN Monitor",
+    LV_SYMBOL_LIST     " Find devices",
 };
 
 static void on_settings_select(lv_event_t *e)
@@ -1043,6 +1054,59 @@ static void build_can_monitor_screen(void)
 }
 
 // ---------------------------------------------------------------------------
+// Find devices screen
+// ---------------------------------------------------------------------------
+
+static void discovery_screen_refresh(void)
+{
+    // Leave room for the status line after the list.
+    int count = discovery_snapshot(s_disc_text, sizeof(s_disc_text) - 64);
+    size_t n = strlen(s_disc_text);
+    if (network_is_connected()) {
+        snprintf(s_disc_text + n, sizeof(s_disc_text) - n, "%sSearching... %d found  (click: start over)",
+                 n ? "\n" : "", count);
+    } else {
+        snprintf(s_disc_text + n, sizeof(s_disc_text) - n, "%sNo network", n ? "\n" : "");
+    }
+    lv_label_set_text_static(s_disc_log, s_disc_text);
+}
+
+static void discovery_poll_cb(lv_timer_t *t)
+{
+    static bool was_up = false;
+    if (s_current_screen != SCREEN_DISCOVERY) return;
+    bool up = network_is_connected();
+    if (discovery_has_new_data() || up != was_up) discovery_screen_refresh();
+    was_up = up;
+}
+
+static void build_discovery_screen(void)
+{
+    s_disc_scr = lv_obj_create(NULL);
+    lv_obj_set_style_pad_all(s_disc_scr, 0, 0);
+
+    lv_obj_t *hdr = lv_label_create(s_disc_scr);
+    lv_obj_set_style_text_font(hdr, &lv_font_montserrat_14, 0);
+    lv_label_set_text(hdr, LV_SYMBOL_LIST " Find devices  (long-press: back)");
+    lv_obj_align(hdr, LV_ALIGN_TOP_LEFT, 4, 2);
+
+    s_disc_cont = lv_obj_create(s_disc_scr);
+    lv_obj_set_size(s_disc_cont, LV_PCT(100), lv_display_get_vertical_resolution(NULL) - 18);
+    lv_obj_align(s_disc_cont, LV_ALIGN_TOP_MID, 0, 18);
+    lv_obj_set_style_pad_all(s_disc_cont, 2, 0);
+    lv_obj_set_scroll_dir(s_disc_cont, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_disc_cont, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_remove_flag(s_disc_cont, LV_OBJ_FLAG_SCROLL_ELASTIC);
+
+    s_disc_log = lv_label_create(s_disc_cont);
+    lv_obj_set_width(s_disc_log, LV_PCT(100));
+    lv_label_set_long_mode(s_disc_log, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_disc_log, &lv_font_montserrat_14, 0);
+    lv_obj_align(s_disc_log, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_label_set_text_static(s_disc_log, "");
+}
+
+// ---------------------------------------------------------------------------
 // Screen transitions (all run in the LVGL task)
 // ---------------------------------------------------------------------------
 
@@ -1212,6 +1276,16 @@ static void ui_open_can_monitor(void)
     lv_screen_load(s_can_scr);
 }
 
+static void ui_open_discovery(void)
+{
+    s_enc_accum = 0;
+    s_current_screen = SCREEN_DISCOVERY;
+    lv_indev_set_group(s_enc_indev, s_empty_group);
+    discovery_start();
+    discovery_screen_refresh();
+    lv_screen_load(s_disc_scr);
+}
+
 // ---------------------------------------------------------------------------
 // Central encoder dispatcher — runs in the LVGL task (main.c enc_queue_drain_cb)
 // ---------------------------------------------------------------------------
@@ -1340,6 +1414,20 @@ void ui_encoder_event(encoder_event_t event)
             ui_open_menu();
         }
         break;
+
+    case SCREEN_DISCOVERY:
+        if (event == ENCODER_CW) {
+            lv_obj_scroll_by(s_disc_cont, 0, -8, LV_ANIM_OFF);
+        } else if (event == ENCODER_CCW) {
+            lv_obj_scroll_by(s_disc_cont, 0, 8, LV_ANIM_OFF);
+        } else if (event == ENCODER_CLICK) {
+            discovery_start();   // clear the list and search again
+            discovery_screen_refresh();
+        } else if (event == ENCODER_LONG) {
+            discovery_stop();
+            ui_open_menu();
+        }
+        break;
     }
 }
 
@@ -1390,6 +1478,8 @@ esp_err_t ui_init(lv_indev_t *encoder_indev, const settings_t *s)
     build_ip_edit_screen();
     build_can_monitor_screen();
     lv_timer_create(can_monitor_poll_cb, 100, NULL);
+    build_discovery_screen();
+    lv_timer_create(discovery_poll_cb, 250, NULL);
 
     s_current_screen = SCREEN_MAIN;
     lv_indev_set_group(s_enc_indev, s_empty_group);

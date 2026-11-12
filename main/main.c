@@ -16,6 +16,7 @@
 #include "services/ui.h"
 #include "services/clock.h"
 #include "services/usb_bridge.h"
+#include "services/discovery.h"
 #include "drivers/twai_can.h"
 #include "drivers/encoder.h"
 
@@ -84,6 +85,12 @@ void app_main(void)
     esp_err_t eth_err = network_init();
     if (eth_err != ESP_OK) {
         ESP_LOGE(TAG, "Ethernet unavailable (%s), continuing without it", esp_err_to_name(eth_err));
+    }
+
+    // Finds PIC32 boards with the Announce service (Menu > Find devices).
+    esp_err_t disc_err = discovery_init();
+    if (disc_err != ESP_OK) {
+        ESP_LOGE(TAG, "device discovery unavailable (%s)", esp_err_to_name(disc_err));
     }
 
     // Apply static IP immediately if configured; DHCP is already the netif default.

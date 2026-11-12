@@ -31,6 +31,9 @@ Flash over the CP2102 port (COM60) and check:
 - [ ] **Encoder:** spin the knob fast in the CAN Monitor while frames arrive; no skipped steps, newest lines
   visible. Knob turns during boot are ignored.
 - [ ] **Boot screen:** dashes for time, date and IP until real values arrive.
+- [ ] **Find devices:** Menu > Find devices lists the PIC32 boards with Announce on (IP, name, MAC), the same
+  ones `find_pic32.py` finds; a board that is power-cycled while the screen is open appears too. Click clears the
+  list and searches again; long-press goes back. Without a cable it says "No network".
 
 Then merge `fix/static-ip-and-can` into `main`.
 
