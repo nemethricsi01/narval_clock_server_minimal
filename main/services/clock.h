@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <time.h>
 #include "esp_err.h"
 
 /** NTP sync interval used without the DS3231 (system time drifts more than the RTC). */
@@ -22,6 +23,12 @@ esp_err_t clock_service_init(void);
 
 /** True if the DS3231 answered at init. */
 bool clock_has_rtc(void);
+
+/**
+ * UTC to local time: adds tz_offset hours (-12..+12) plus DST, where dst_mode is
+ * 0 = Winter (never), 1 = Summer (always +1 h), 2 = Auto (EU rules for that date).
+ */
+struct tm clock_utc_to_local(const struct tm *utc, int tz_offset, int dst_mode);
 
 /** Called by ui_init() once all LVGL widgets are built and safe to write. */
 void clock_notify_ui_ready(void);

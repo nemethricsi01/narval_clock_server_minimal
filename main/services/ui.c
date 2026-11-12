@@ -961,8 +961,7 @@ static void can_monitor_refresh(void)
     if (s_current_screen != SCREEN_CAN_MONITOR) return;
     if (!s_can_follow) return;
 
-    int offset = ui_get_tz_offset_hours() + (ui_get_dst_mode() == 1 ? 1 : 0);
-    can_mon_snapshot(s_can_log_text, sizeof(s_can_log_text), offset);
+    can_mon_snapshot(s_can_log_text, sizeof(s_can_log_text), ui_get_tz_offset_hours(), ui_get_dst_mode());
     lv_label_set_text_static(s_can_log,
                              s_can_log_text[0] ? s_can_log_text : "Waiting for CAN frames...");
     // Recompute the container's content height for the new text first;

@@ -10,6 +10,7 @@
 // clock_task can always acquire display_lock to run its NTP check.
 
 #include "can_monitor.h"
+#include "clock.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -77,20 +78,20 @@ static void decode_remote_led_layer(char *buf, size_t len, const char *label, co
 
 // ---------------------------------------------------------------------------
 // Line formatter — full Narval protocol decoder
-// local_offset_hours: pre-computed TZ+DST offset supplied by the caller
+// tz_offset_hours / dst_mode: as for clock_utc_to_local(), applied per entry so
+// Auto DST is right for each entry's own date
 // ---------------------------------------------------------------------------
 
-static void format_line(const can_mon_entry_t *e, char *buf, size_t len, int local_offset_hours)
+static void format_line(const can_mon_entry_t *e, char *buf, size_t len, int tz_offset_hours, int dst_mode)
 {
     if (e->is_sep) {
         snprintf(buf, len, "--------------------[%2d]--------------------\n", e->sep_num);
         return;
     }
 
-    struct tm tm;
-    gmtime_r(&e->wall_sec, &tm);
-    tm.tm_hour += local_offset_hours;
-    mktime(&tm);  // normalise hour overflow
+    struct tm utc;
+    gmtime_r(&e->wall_sec, &utc);
+    struct tm tm = clock_utc_to_local(&utc, tz_offset_hours, dst_mode);
 
     char ts[10];
     snprintf(ts, sizeof(ts), "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
@@ -353,7 +354,7 @@ bool can_mon_has_new_data(void)
     return true;
 }
 
-int can_mon_snapshot(char *out, size_t out_len, int local_offset_hours)
+int can_mon_snapshot(char *out, size_t out_len, int tz_offset_hours, int dst_mode)
 {
     if (!s_mutex || !out || out_len == 0) {
         if (out && out_len > 0) out[0] = '\0';
@@ -369,7 +370,7 @@ int can_mon_snapshot(char *out, size_t out_len, int local_offset_hours)
     for (int i = 0; i < count && pos < out_len - 1; i++) {
         int  idx = (start + i) % CAN_MON_LOG_SIZE;
         char line[CAN_MON_LINE_MAX];
-        format_line(&s_log[idx], line, sizeof(line), local_offset_hours);
+        format_line(&s_log[idx], line, sizeof(line), tz_offset_hours, dst_mode);
         size_t ll = strlen(line);
         if (pos + ll >= out_len - 1) break;
         memcpy(out + pos, line, ll);

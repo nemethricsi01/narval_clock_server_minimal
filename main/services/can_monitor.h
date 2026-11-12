@@ -36,8 +36,9 @@ bool can_mon_has_new_data(void);
 
 /**
  * Render the full log (oldest first) into out[0..out_len-1] as a null-terminated string.
- * local_offset_hours: TZ + DST hours to add to stored UTC timestamps (computed by caller).
+ * Timestamps are shown in local time: tz_offset_hours and dst_mode as for
+ * clock_utc_to_local(), applied to each entry's own date (so Auto DST is right).
  * Returns the number of bytes written (excluding the null terminator). Thread-safe.
  */
-int can_mon_snapshot(char *out, size_t out_len, int local_offset_hours);
+int can_mon_snapshot(char *out, size_t out_len, int tz_offset_hours, int dst_mode);
 

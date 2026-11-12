@@ -76,7 +76,7 @@ static int effective_dst_hours(const struct tm *utc, int dst_mode)
     }
 }
 
-static struct tm utc_to_local(const struct tm *utc, int tz_offset, int dst_mode)
+struct tm clock_utc_to_local(const struct tm *utc, int tz_offset, int dst_mode)
 {
     struct tm local = *utc;
     local.tm_hour += tz_offset + effective_dst_hours(utc, dst_mode);
@@ -289,11 +289,11 @@ static void clock_task(void *arg)
             gmtime_r(&now, &utc);
         }
 
-        // Capture UTC time_t for CAN sync tracking before utc_to_local touches the struct
+        // Capture UTC time_t for CAN sync tracking before clock_utc_to_local touches the struct
         struct tm utc_copy = utc;
         time_t utc_ts = mktime(&utc_copy);  // ESP-IDF newlib: TZ defaults to UTC
 
-        struct tm local = utc_to_local(&utc, tz_offset, dst_mode);
+        struct tm local = clock_utc_to_local(&utc, tz_offset, dst_mode);
 
         // Rate 0 is "Never": the CAN time broadcast is switched off.
         if (cur_can_rate != 0) {
@@ -317,7 +317,7 @@ static void clock_task(void *arg)
         struct tm tmp_utc_tm;
         if (s_ntp_sync_utc != 0) {
             gmtime_r((const time_t *)&s_ntp_sync_utc, &tmp_utc_tm);
-            struct tm ntp_local = utc_to_local(&tmp_utc_tm, tz_offset, dst_mode);
+            struct tm ntp_local = clock_utc_to_local(&tmp_utc_tm, tz_offset, dst_mode);
             snprintf(ntp_str, sizeof(ntp_str), "%02d:%02d:%02d",
                      ntp_local.tm_hour, ntp_local.tm_min, ntp_local.tm_sec);
         } else {
@@ -328,7 +328,7 @@ static void clock_task(void *arg)
             strcpy(can_str, "off");
         } else if (s_can_sync_utc != 0) {
             gmtime_r((const time_t *)&s_can_sync_utc, &tmp_utc_tm);
-            struct tm can_local = utc_to_local(&tmp_utc_tm, tz_offset, dst_mode);
+            struct tm can_local = clock_utc_to_local(&tmp_utc_tm, tz_offset, dst_mode);
             snprintf(can_str, sizeof(can_str), "%02d:%02d:%02d",
                      can_local.tm_hour, can_local.tm_min, can_local.tm_sec);
         } else {

@@ -19,9 +19,8 @@ Items marked *after CAN merge* touch files that merge changes, so recheck them f
   never arrives. Until the first NTP sync there is no time, so nothing is shown or sent on CAN.
 - [x] **Encoder callbacks block the esp_timer task** — fixed 2026-11-12: `on_encoder_event()` only does a
   non-blocking `xQueueSend()`; an `lv_timer` (10 ms) in the LVGL task drains the queue into `ui_encoder_event()`.
-- [ ] **CAN Monitor timestamps ignore Auto DST** — `ui.c` `can_monitor_refresh()`. DST is added only for
-  mode Summer (`== 1`), but the default is Auto (`settings.h:38`), so in summer the log is an hour off from
-  the TX TIME it shows. Fix: reuse `utc_to_local()` from `clock.c:72` (export it) per log entry.
+- [x] **CAN Monitor timestamps ignore Auto DST** — fixed 2026-11-12: `can_mon_snapshot()` takes the timezone
+  and DST mode and converts each entry with `clock_utc_to_local()` (exported from `clock.c`).
 - [ ] **Placeholder text looks like real data** — `ui.c` (`build_main_screen`). "12:34:56" and "2026/04/30"
   stay until real values arrive, so a unit with a dead RTC battery and no network shows a believable fake
   time. Fix: "--:--:--", "----/--/--". (The IP part is done: `ui_init()` and link-down now show "IP: --".)
