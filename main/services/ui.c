@@ -481,11 +481,11 @@ static void on_settings_back(lv_event_t *e) { ui_show_menu(); }
 // Call from the LVGL task or with display_lock() held.
 static void show_network_status(void)
 {
-    bool up = network_is_connected();
-    char label[24];
-    if (up) snprintf(label, sizeof(label), "IP:%s", network_get_ip_str());
-    ui_set_ip(up ? label : "IP: --");
-    ui_set_connection_state(up ? UI_CONN_LAN : UI_CONN_DISCONNECTED);
+    char ip[16], label[24];
+    network_get_ip_str(ip, sizeof(ip));   // one snapshot: "" while not connected
+    snprintf(label, sizeof(label), "IP:%s", ip);
+    ui_set_ip(ip[0] ? label : "IP: --");
+    ui_set_connection_state(ip[0] ? UI_CONN_LAN : UI_CONN_DISCONNECTED);
 }
 
 static void on_net_apply(lv_event_t *e)

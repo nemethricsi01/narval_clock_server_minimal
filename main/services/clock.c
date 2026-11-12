@@ -243,8 +243,8 @@ static void clock_task(void *arg)
         // (CONFIG_LWIP_SNTP_MAXIMUM_STARTUP_DELAY).
         // This must not be gated on s_time_valid: if the DS3231 has no valid time
         // yet, NTP is the only path to set it via on_ntp_sync.
-        char cur_ip[16] = "";
-        if (network_is_connected()) strlcpy(cur_ip, network_get_ip_str(), sizeof(cur_ip));
+        char cur_ip[16];
+        network_get_ip_str(cur_ip, sizeof(cur_ip));   // "" while offline
         bool new_ip = cur_ip[0] && strcmp(cur_ip, last_ip) != 0;
         strcpy(last_ip, cur_ip);   // "" while offline, so reconnecting with the same IP counts too
 

@@ -13,14 +13,14 @@ static const char *TAG = "network";
 
 static esp_netif_t *s_eth_netif = NULL;
 static bool          s_eth_ready = false;   // set once network_init() fully succeeded
-static volatile bool s_connected = false;
-static char          s_ip_str[16] = "";
+// Current IPv4 address (as in esp_ip4_addr_t), 0 while there is none. A single
+// 32-bit variable, so readers in other tasks always see a whole address.
+static volatile uint32_t s_ip_addr = 0;
 
 // Forget the current address until on_got_ip() reports one again.
 static void clear_ip(void)
 {
-    s_connected = false;
-    s_ip_str[0] = '\0';
+    s_ip_addr = 0;
 }
 
 static void on_eth_event(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -48,12 +48,11 @@ static void on_eth_event(void *arg, esp_event_base_t base, int32_t id, void *dat
 static void on_got_ip(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
-    snprintf(s_ip_str, sizeof(s_ip_str), IPSTR, IP2STR(&e->ip_info.ip));
-    s_connected = true;
-    ESP_LOGI(TAG, "got IP: %s", s_ip_str);
+    s_ip_addr = e->ip_info.ip.addr;
+    ESP_LOGI(TAG, "got IP: " IPSTR, IP2STR(&e->ip_info.ip));
 
     char label[24];
-    snprintf(label, sizeof(label), "IP:%s", s_ip_str);
+    snprintf(label, sizeof(label), "IP:" IPSTR, IP2STR(&e->ip_info.ip));
     display_lock();
     ui_set_ip(label);
     ui_set_connection_state(UI_CONN_LAN);
@@ -85,12 +84,14 @@ esp_err_t network_init(void)
 
 bool network_is_connected(void)
 {
-    return s_connected;
+    return s_ip_addr != 0;
 }
 
-const char *network_get_ip_str(void)
+void network_get_ip_str(char *out, size_t len)
 {
-    return s_ip_str;
+    esp_ip4_addr_t ip = { .addr = s_ip_addr };   // read once: a consistent snapshot
+    if (ip.addr) snprintf(out, len, IPSTR, IP2STR(&ip));
+    else if (len) out[0] = '\0';
 }
 
 esp_err_t network_apply_ip(const network_ip_cfg_t *cfg)
