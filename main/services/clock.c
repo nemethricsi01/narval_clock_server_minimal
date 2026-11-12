@@ -279,11 +279,12 @@ static void clock_task(void *arg)
         // Apply DS3231 aging offset once on startup, then on every user change.
         // ds3231_set_aging_offset also triggers a manual temperature conversion
         // so the new offset takes effect on the oscillator immediately.
-        if (s_has_rtc && (!rtc_trim_synced || cur_rtc_trim != last_rtc_trim)) {
+        // Marked done only on success, so a failed I2C write is retried next tick.
+        if (s_has_rtc && (!rtc_trim_synced || cur_rtc_trim != last_rtc_trim) &&
+            ds3231_set_aging_offset(&s_rtc, cur_rtc_trim) == ESP_OK) {
             rtc_trim_synced = true;
             last_rtc_trim   = cur_rtc_trim;
-            if (ds3231_set_aging_offset(&s_rtc, cur_rtc_trim) == ESP_OK)
-                ESP_LOGI(TAG, "aging offset → %d", cur_rtc_trim);
+            ESP_LOGI(TAG, "aging offset → %d", cur_rtc_trim);
         }
 
         // The rest requires a valid time: seeded from the DS3231 or set by NTP

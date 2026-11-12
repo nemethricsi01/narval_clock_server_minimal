@@ -37,8 +37,8 @@ Items marked *after CAN merge* touch files that merge changes, so recheck them f
   only the commit is checked. Fix: keep the first error and return it.
 - [x] **NTP server string rewritten while SNTP uses it** — fixed 2026-11-12: `use_ntp_server()` alternates
   between two buffers, so the one SNTP points at is never rewritten.
-- [ ] **RTC aging offset not retried after an I2C failure** — `clock.c:211-216`. `rtc_trim_synced` and
-  `last_rtc_trim` are updated before the write, so a failed write is never retried. Fix: update them only on `ESP_OK`.
+- [x] **RTC aging offset not retried after an I2C failure** — fixed 2026-11-12: marked done only on `ESP_OK`,
+  so a failed write is retried on the next tick.
 
 ## Comments to correct
 
