@@ -12,11 +12,12 @@ idf_component_register(
         "services/ui.c"
         "services/clock.c"
         "services/settings.c"
+        "services/usb_bridge.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_lcd driver esp_timer freertos esp_system
         esp_eth esp_netif esp_event nvs_flash
-        esp_driver_twai esp_driver_ledc esp_driver_gpio
+        esp_driver_twai esp_driver_ledc esp_driver_gpio esp_driver_usb_serial_jtag
         lwip
         knob button
         ds3231 i2cdev)

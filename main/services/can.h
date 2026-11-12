@@ -31,6 +31,6 @@ QueueHandle_t can_service_get_queue(void);
  * Transmit a frame on the CAN bus.
  *
  * @param frame       Frame to send.
- * @param timeout_ms  Max wait if the TX queue is full; 0 = non-blocking.
+ * @param timeout_ms  Max wait for room in the TX pool/queue; 0 = non-blocking.
  */
 esp_err_t can_service_send(const can_frame_t *frame, int timeout_ms);

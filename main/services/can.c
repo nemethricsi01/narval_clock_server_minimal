@@ -1,5 +1,6 @@
 #include "can.h"
 #include "can_monitor.h"
+#include "usb_bridge.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
@@ -242,6 +243,7 @@ static void can_task(void *arg)
                  frame.data[0], frame.data[1], frame.data[2], frame.data[3],
                  frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
         can_mon_push(&frame, false);
+        usb_bridge_forward(&frame);
     }
 }
 
@@ -353,18 +355,28 @@ static void reclaim_stale_tx_slots(void)
     }
 }
 
-esp_err_t can_service_send(const can_frame_t *frame, int timeout_ms)
+// Claims a TX pool slot, waiting up to timeout_ms for one to free up.
+// If the pool looks full, first reclaims anything the driver silently dropped
+// (see reclaim_stale_tx_slots()). Returns -1 on timeout.
+static int claim_tx_slot(int timeout_ms)
 {
-    int idx = try_claim_tx_slot();
-    if (idx < 0) {
-        // Pool looked full — reclaim anything the driver silently dropped
-        // (see reclaim_stale_tx_slots()) and retry once before giving up.
+    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    while (1) {
+        int idx = try_claim_tx_slot();
+        if (idx >= 0) return idx;
         reclaim_stale_tx_slots();
         idx = try_claim_tx_slot();
-        if (idx < 0) {
-            ESP_LOGW(TAG, "TX pool exhausted (%d slots all busy)", TX_POOL_SIZE);
-            return ESP_ERR_NO_MEM;   // all slots still genuinely held by TWAI driver
-        }
+        if (idx >= 0 || esp_timer_get_time() >= deadline) return idx;
+        vTaskDelay(1);   // a frame takes ~11 ms on the bus
+    }
+}
+
+esp_err_t can_service_send(const can_frame_t *frame, int timeout_ms)
+{
+    int idx = claim_tx_slot(timeout_ms);
+    if (idx < 0) {
+        ESP_LOGW(TAG, "TX pool exhausted (%d slots all busy)", TX_POOL_SIZE);
+        return ESP_ERR_NO_MEM;   // all slots still genuinely held by TWAI driver
     }
 
     uint8_t dlc = (frame->header.dlc < CAN_DATA_MAX_LEN) ? frame->header.dlc : CAN_DATA_MAX_LEN;

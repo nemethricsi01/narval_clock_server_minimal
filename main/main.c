@@ -14,6 +14,7 @@
 #include "services/can_monitor.h"
 #include "services/ui.h"
 #include "services/clock.h"
+#include "services/usb_bridge.h"
 #include "drivers/twai_can.h"
 #include "drivers/encoder.h"
 
@@ -82,6 +83,11 @@ void app_main(void)
     twai_node_handle_t can_node = NULL;
     ESP_ERROR_CHECK(twai_can_init(&can_node));
     ESP_ERROR_CHECK(can_service_init(can_node));
+
+    esp_err_t usb_err = usb_bridge_init();   // CAN <-> USB on the built-in USB port
+    if (usb_err != ESP_OK) {
+        ESP_LOGE(TAG, "USB bridge unavailable (%s), continuing without it", esp_err_to_name(usb_err));
+    }
 
     // The clock task is driven by the DS3231's 1 Hz output, so without the RTC
     // there is no clock, NTP or CAN time broadcast; the UI still works.

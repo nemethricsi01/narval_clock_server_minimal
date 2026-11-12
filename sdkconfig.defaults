@@ -2,3 +2,5 @@ CONFIG_LV_CONF_SKIP=y
 CONFIG_LV_USE_OBSERVER=y
 CONFIG_LV_USE_SYSMON=y
 CONFIG_LV_USE_PERF_MONITOR=y
+# The built-in USB port is the CAN bridge (services/usb_bridge.c): no logs there.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

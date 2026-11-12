@@ -2,6 +2,7 @@
 #include "network.h"
 #include "can.h"
 #include "can_monitor.h"
+#include "usb_bridge.h"
 #include "board.h"
 #include "services/display.h"
 #include "services/ui.h"
@@ -93,6 +94,10 @@ static void IRAM_ATTR sqw_isr(void *arg)
 // CAN transmit — sends DATE then TIME frames every 1 Hz tick
 // ---------------------------------------------------------------------------
 
+// Short wait for a TX slot, so a burst from the USB bridge can't starve the
+// time broadcast (a frame takes ~11 ms on the bus).
+#define CAN_SEND_TIMEOUT_MS 30
+
 static bool send_can_datetime(const struct tm *t)
 {
     // Static storage: the TWAI driver stores a pointer to data[], not a copy.
@@ -105,16 +110,16 @@ static bool send_can_datetime(const struct tm *t)
     date_f.data[1] = (uint8_t)((t->tm_mon  + 1)   & 0x0F);
     date_f.data[2] = (uint8_t)(t->tm_mday          & 0x1F);
     date_f.data[3] = 0x02;
-    esp_err_t r1 = can_service_send(&date_f, 0);
-    if (r1 == ESP_OK) can_mon_push(&date_f, true);
+    esp_err_t r1 = can_service_send(&date_f, CAN_SEND_TIMEOUT_MS);
+    if (r1 == ESP_OK) { can_mon_push(&date_f, true); usb_bridge_forward(&date_f); }
 
     // TIME:  000HHHHH 00MMMMMM 00SSSSSS 00000001
     time_f.data[0] = (uint8_t)(t->tm_hour & 0x1F);
     time_f.data[1] = (uint8_t)(t->tm_min  & 0x3F);
     time_f.data[2] = (uint8_t)(t->tm_sec  & 0x3F);
     time_f.data[3] = 0x01;
-    esp_err_t r2 = can_service_send(&time_f, 0);
-    if (r2 == ESP_OK) can_mon_push(&time_f, true);
+    esp_err_t r2 = can_service_send(&time_f, CAN_SEND_TIMEOUT_MS);
+    if (r2 == ESP_OK) { can_mon_push(&time_f, true); usb_bridge_forward(&time_f); }
 
     return (r1 == ESP_OK) && (r2 == ESP_OK);
 }
