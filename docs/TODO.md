@@ -31,10 +31,10 @@ Items marked *after CAN merge* touch files that merge changes, so recheck them f
   longer sets `s_connected`; only `on_got_ip()` does, and ESP-IDF posts that for a static IP only while the
   link is up. Also fixed: changing one static IP to another failed silently until reboot (wrong
   "already stopped" error code).
-- [ ] **Settings fallbacks differ from `SETTINGS_DEFAULT`** — `settings.c:36` (`tz_idx` → 12, default 13).
-  Fix: fall back to the `SETTINGS_DEFAULT` field. (`rate_idx` done 2026-11-11.)
-- [ ] **`nvs_set_*` results ignored** — `settings.c:53-64`. A failed write (e.g. NVS full) is lost silently;
-  only the commit is checked. Fix: keep the first error and return it.
+- [x] **Settings fallbacks differ from `SETTINGS_DEFAULT`** — fixed 2026-11-12: an out-of-range saved value
+  now leaves the default (was wrong for `tz_idx` and `dst_idx`).
+- [x] **`nvs_set_*` results ignored** — fixed 2026-11-12: `settings_save()` stops at the first failed write
+  and returns its error.
 - [x] **NTP server string rewritten while SNTP uses it** — fixed 2026-11-12: `use_ntp_server()` alternates
   between two buffers, so the one SNTP points at is never rewritten.
 - [x] **RTC aging offset not retried after an I2C failure** — fixed 2026-11-12: marked done only on `ESP_OK`,
