@@ -25,9 +25,8 @@ Items marked *after CAN merge* touch files that merge changes, so recheck them f
   "----/--/--" and "IP: --" until real values arrive.
 - [x] **Encoder events can arrive before `lv_init()`** — fixed 2026-11-12 by the item above: the callback no
   longer touches LVGL, and knob events queued during boot are discarded once the UI is up.
-- [ ] **RTC validity ignores the oscillator-stop flag** — `clock.c:325`. Only year ≥ 2020 is checked, so a
-  stale time after an oscillator stop is broadcast on CAN until NTP syncs. Fix: treat
-  `ds3231_get_oscillator_stop_flag()` as invalid time; clear the flag after `on_ntp_sync()` sets the RTC.
+- [x] **RTC validity ignores the oscillator-stop flag** — fixed 2026-11-12: `rtc_init()` doesn't seed from the
+  RTC while the flag is set (or can't be read); `on_ntp_sync()` clears it after setting the RTC.
 - [x] **Static IP shown as connected with the cable unplugged** — fixed 2026-11-11: `network_apply_ip()` no
   longer sets `s_connected`; only `on_got_ip()` does, and ESP-IDF posts that for a static IP only while the
   link is up. Also fixed: changing one static IP to another failed silently until reboot (wrong

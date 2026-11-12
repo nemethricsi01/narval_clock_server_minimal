@@ -170,6 +170,11 @@ static void on_ntp_sync(struct timeval *tv)
         ESP_LOGE(TAG, "RTC write failed after NTP sync");
         return;
     }
+    // The RTC holds good time again: clear the oscillator-stop flag so the next
+    // boot trusts it (see rtc_init()).
+    if (s_has_rtc && ds3231_clear_oscillator_stop_flag(&s_rtc) != ESP_OK) {
+        ESP_LOGW(TAG, "couldn't clear the DS3231 oscillator-stop flag");
+    }
     s_ntp_sync_utc = t_sec;
     s_time_valid   = true;
     ESP_LOGI(TAG, "synced%s: %04d-%02d-%02d %02d:%02d:%02d UTC",
@@ -393,9 +398,13 @@ static esp_err_t rtc_init(void)
 
     // Seed system time from DS3231 immediately so that CAN frame timestamps
     // and the on-screen clock are valid before NTP first syncs.
-    // Any year < 2020 is treated as an unset RTC (still at factory default).
+    // Not trusted if the oscillator-stop flag is set (the oscillator stopped at
+    // some point, e.g. the backup battery ran flat while unpowered, so the time
+    // is stale; on_ntp_sync() clears it) or the year is < 2020 (never set).
+    bool osc_stopped = true;   // stays true if the flag can't be read
+    ds3231_get_oscillator_stop_flag(&s_rtc, &osc_stopped);
     struct tm rtc_seed;
-    if (ds3231_get_time(&s_rtc, &rtc_seed) == ESP_OK && rtc_seed.tm_year >= 120) {
+    if (!osc_stopped && ds3231_get_time(&s_rtc, &rtc_seed) == ESP_OK && rtc_seed.tm_year >= 120) {
         struct timeval tv = { .tv_sec = mktime(&rtc_seed), .tv_usec = 0 };
         settimeofday(&tv, NULL);
         s_time_valid = true;
@@ -403,7 +412,8 @@ static esp_err_t rtc_init(void)
                  rtc_seed.tm_year + 1900, rtc_seed.tm_mon + 1, rtc_seed.tm_mday,
                  rtc_seed.tm_hour, rtc_seed.tm_min, rtc_seed.tm_sec);
     } else {
-        ESP_LOGW(TAG, "DS3231 time not valid — waiting for NTP sync");
+        ESP_LOGW(TAG, "DS3231 time not valid (%s) — waiting for NTP sync",
+                 osc_stopped ? "oscillator had stopped, time is stale" : "never set");
     }
     return ESP_OK;
 }
