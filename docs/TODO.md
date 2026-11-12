@@ -21,9 +21,8 @@ Items marked *after CAN merge* touch files that merge changes, so recheck them f
   non-blocking `xQueueSend()`; an `lv_timer` (10 ms) in the LVGL task drains the queue into `ui_encoder_event()`.
 - [x] **CAN Monitor timestamps ignore Auto DST** — fixed 2026-11-12: `can_mon_snapshot()` takes the timezone
   and DST mode and converts each entry with `clock_utc_to_local()` (exported from `clock.c`).
-- [ ] **Placeholder text looks like real data** — `ui.c` (`build_main_screen`). "12:34:56" and "2026/04/30"
-  stay until real values arrive, so a unit with a dead RTC battery and no network shows a believable fake
-  time. Fix: "--:--:--", "----/--/--". (The IP part is done: `ui_init()` and link-down now show "IP: --".)
+- [x] **Placeholder text looks like real data** — fixed 2026-11-12: the main screen starts with "--:--:--",
+  "----/--/--" and "IP: --" until real values arrive.
 - [x] **Encoder events can arrive before `lv_init()`** — fixed 2026-11-12 by the item above: the callback no
   longer touches LVGL, and knob events queued during boot are discarded once the UI is up.
 - [ ] **RTC validity ignores the oscillator-stop flag** — `clock.c:325`. Only year ≥ 2020 is checked, so a

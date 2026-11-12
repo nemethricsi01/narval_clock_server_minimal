@@ -568,17 +568,17 @@ static void build_main_screen(void)
 
     s_ip_label = lv_label_create(s_main_scr);
     lv_obj_set_style_text_font(s_ip_label, &lv_font_montserrat_14, 0);
-    lv_label_set_text(s_ip_label, "IP:1.2.3.4");
+    lv_label_set_text(s_ip_label, "IP: --");
     lv_obj_align(s_ip_label, LV_ALIGN_TOP_LEFT, 4, 4);
 
     s_time_label = lv_label_create(s_main_scr);
     lv_obj_set_style_text_font(s_time_label, &lv_font_montserrat_46, 0);
-    lv_label_set_text(s_time_label, "12:34:56");
+    lv_label_set_text(s_time_label, "--:--:--");   // dashes until clock_task has a valid time
     lv_obj_align(s_time_label, LV_ALIGN_CENTER, 0, -10);
 
     s_date_label = lv_label_create(s_main_scr);
     lv_obj_set_style_text_font(s_date_label, &lv_font_montserrat_20, 0);
-    lv_label_set_text(s_date_label, "2026/04/30");
+    lv_label_set_text(s_date_label, "----/--/--");
     lv_obj_align(s_date_label, LV_ALIGN_CENTER, 0, 20);
 
     s_connected_label = lv_label_create(s_main_scr);
@@ -1427,13 +1427,6 @@ void ui_show_init_errors(bool eth_failed, bool rtc_failed)
     lv_obj_set_style_text_color(lbl, lv_palette_main(LV_PALETTE_RED), 0);
     lv_label_set_text(lbl, msg);
     lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 26);
-
-    // Don't leave placeholder values that look like real data next to the error.
-    // (The IP label already shows "IP: --": ui_init() ran show_network_status().)
-    if (rtc_failed) {
-        ui_set_time("--:--:--");
-        ui_set_date("----/--/--");
-    }
 }
 
 void ui_set_last_sync(const char *ntp_time, const char *can_time)
