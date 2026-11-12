@@ -87,6 +87,11 @@ bool network_is_connected(void)
     return s_ip_addr != 0;
 }
 
+uint32_t network_get_ip(void)
+{
+    return s_ip_addr;
+}
+
 void network_get_ip_str(char *out, size_t len)
 {
     esp_ip4_addr_t ip = { .addr = s_ip_addr };   // read once: a consistent snapshot

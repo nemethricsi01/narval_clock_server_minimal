@@ -2,7 +2,7 @@
 #include "network.h"
 #include "esp_check.h"
 #include "esp_log.h"
-#include "esp_netif_ip_addr.h"
+#include "esp_netif.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -17,6 +17,7 @@
 static const char *TAG = "discovery";
 
 #define ANNOUNCE_PORT      30303
+#define ANNOUNCE_NAME      "NARV_CLK_SERV"   // how this device shows up in find_pic32.py
 #define QUERY              "Discovery: Who is out there?"
 #define QUERY_INTERVAL_US  (1000 * 1000)
 #define MAX_DEVICES        16
@@ -81,12 +82,10 @@ static void add_device(const device_t *d)
     }
 }
 
-// An Announce reply is "name\r\nMAC\r\n[note]". Anything else (except a
-// query from another PC) is listed as unrecognised, like find_pic32.py does.
+// An Announce reply is "name\r\nMAC\r\n[note]". Anything else is listed as
+// unrecognised, like find_pic32.py does.
 static void handle_packet(uint32_t ip, const char *data, int len)
 {
-    if (len >= 9 && memcmp(data, "Discovery", 9) == 0) return;   // someone else searching
-
     device_t d = { .ip = ip };
     char mac[24];
     const char *p = data, *end = data + len;
@@ -103,23 +102,48 @@ static void handle_packet(uint32_t ip, const char *data, int len)
     add_device(&d);
 }
 
+// This device's own Announce packet, in the Microchip stack's format: name and
+// MAC, plus the note the stack adds to its unsolicited DHCP/power announcements.
+static void send_announce(int sock, const struct sockaddr_in *to, bool event)
+{
+    uint8_t m[6];
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("ETH_DEF");
+    if (!netif || esp_netif_get_mac(netif, m) != ESP_OK) return;
+
+    char pkt[80];
+    int len = snprintf(pkt, sizeof(pkt), ANNOUNCE_NAME "\r\n%02X-%02X-%02X-%02X-%02X-%02X\r\n%s",
+                       m[0], m[1], m[2], m[3], m[4], m[5], event ? "DHCP/Power event occurred" : "");
+    if (sendto(sock, pkt, len, 0, (const struct sockaddr *)to, sizeof(*to)) < 0) {
+        ESP_LOGD(TAG, "announce not sent: errno %d", errno);
+    }
+}
+
 static void discovery_task(void *arg)
 {
     int sock = (int)(intptr_t)arg;
     int64_t next_query = 0;
+    uint32_t last_ip = 0;
     char buf[256];
+    const struct sockaddr_in broadcast = {
+        .sin_family      = AF_INET,
+        .sin_port        = htons(ANNOUNCE_PORT),
+        .sin_addr.s_addr = htonl(INADDR_BROADCAST),
+    };
 
     while (1) {
+        // Announce once per new IP, as the Microchip stack does on DHCP/power events.
+        uint32_t my_ip = network_get_ip();
+        if (my_ip && my_ip != last_ip) {
+            send_announce(sock, &broadcast, true);
+            ESP_LOGI(TAG, "announced as " ANNOUNCE_NAME);
+        }
+        last_ip = my_ip;
+
         if (s_searching && network_is_connected() &&
             (s_query_now || esp_timer_get_time() >= next_query)) {
             s_query_now = false;
             next_query  = esp_timer_get_time() + QUERY_INTERVAL_US;
-            struct sockaddr_in to = {
-                .sin_family      = AF_INET,
-                .sin_port        = htons(ANNOUNCE_PORT),
-                .sin_addr.s_addr = htonl(INADDR_BROADCAST),
-            };
-            if (sendto(sock, QUERY, strlen(QUERY), 0, (struct sockaddr *)&to, sizeof(to)) < 0) {
+            if (sendto(sock, QUERY, strlen(QUERY), 0, (const struct sockaddr *)&broadcast, sizeof(broadcast)) < 0) {
                 ESP_LOGD(TAG, "query not sent: errno %d", errno);
             }
         }
@@ -128,7 +152,13 @@ static void discovery_task(void *arg)
         struct sockaddr_in from;
         socklen_t from_len = sizeof(from);
         int n = recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
-        if (n > 0 && s_searching) handle_packet(from.sin_addr.s_addr, buf, n);
+        if (n <= 0 || from.sin_addr.s_addr == my_ip) continue;   // nothing, or our own packet
+
+        if (n >= 9 && memcmp(buf, "Discovery", 9) == 0) {
+            send_announce(sock, &from, false);   // someone is searching: answer them directly
+        } else if (s_searching) {
+            handle_packet(from.sin_addr.s_addr, buf, n);
+        }
     }
 }
 

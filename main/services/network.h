@@ -16,6 +16,9 @@ esp_err_t network_init(void);
 /** Returns true while the cable link is up and an IP address is in use (DHCP or static). */
 bool network_is_connected(void);
 
+/** Returns the current IP (as in esp_ip4_addr_t), or 0 if not connected. Safe from any task. */
+uint32_t network_get_ip(void);
+
 /**
  * Writes the current IP as a dotted-decimal string into out (16 bytes is enough),
  * or "" if not connected. Safe from any task.

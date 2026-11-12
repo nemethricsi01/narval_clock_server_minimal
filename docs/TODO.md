@@ -34,8 +34,18 @@ Flash over the CP2102 port (COM60) and check:
 - [ ] **Find devices:** Menu > Find devices lists the PIC32 boards with Announce on (IP, name, MAC), the same
   ones `find_pic32.py` finds; a board that is power-cycled while the screen is open appears too. Click clears the
   list and searches again; long-press goes back. Without a cable it says "No network".
+- [ ] **Announce:** `find_pic32.py` on the PC lists `NARV_CLK_SERV` with this device's IP and MAC. With
+  `find_pic32.py -t 60` running, unplugging and replugging the cable makes it appear with "DHCP/Power event
+  occurred".
 
 Then merge `fix/static-ip-and-can` into `main`.
+
+## Open issues
+
+- [ ] **Every unit has the same MAC** — `board.h` `BOARD_ETH_MAC` is hard-coded (02:AB:CD:12:34:56) because the
+  W5500 modules have no factory MAC. Two clock servers on one network would clash, and both announce the same
+  MAC. Fix: in `eth_w5500_init()`, use `esp_read_mac(mac, ESP_MAC_ETH)`, which derives a unique Ethernet MAC from
+  the ESP32-S3's factory eFuse MAC.
 
 ## Comments to correct
 

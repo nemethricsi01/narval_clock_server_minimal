@@ -11,6 +11,9 @@
  * replies (name, MAC and an optional note). The stack's own power-up and DHCP
  * announcements arrive on the same port and are collected too.
  *
+ * This device also takes part as "NARV_CLK_SERV": it answers every query
+ * (searching or not) and broadcasts an announcement whenever it gets a new IP.
+ *
  * Call after esp_netif_init(). Returns an error instead of aborting.
  */
 esp_err_t discovery_init(void);
