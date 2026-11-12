@@ -8,7 +8,7 @@
 #include "esp_log.h"
 #include <string.h>
 
-#include "services/settings.h"
+#include "services/config.h"
 #include "services/network.h"
 #include "services/display.h"
 #include "services/can.h"
@@ -73,9 +73,8 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    // Load settings before any subsystem that depends on them.
-    settings_t cfg;
-    settings_load(&cfg);
+    // Load the live settings before any subsystem that depends on them.
+    config_init();
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -93,14 +92,8 @@ void app_main(void)
         ESP_LOGE(TAG, "device discovery unavailable (%s)", esp_err_to_name(disc_err));
     }
 
-    // Apply static IP immediately if configured; DHCP is already the netif default.
-    if (eth_err == ESP_OK && !cfg.net_dhcp) {
-        network_ip_cfg_t net_cfg = { .dhcp = false };
-        memcpy(net_cfg.ip,   cfg.net_ip,   4);
-        memcpy(net_cfg.mask, cfg.net_mask, 4);
-        memcpy(net_cfg.gw,   cfg.net_gw,   4);
-        network_apply_ip(&net_cfg);
-    }
+    // Apply the static IP now if one is set; DHCP is already the netif default.
+    if (eth_err == ESP_OK) config_apply_network();
 
     can_mon_init();   // must be before any task that calls can_mon_push
 
@@ -132,7 +125,7 @@ void app_main(void)
     lv_indev_set_type(enc_indev, LV_INDEV_TYPE_ENCODER);
     lv_indev_set_read_cb(enc_indev, encoder_read_cb);
 
-    ESP_ERROR_CHECK(ui_init(enc_indev, &cfg));
+    ESP_ERROR_CHECK(ui_init(enc_indev));
     ui_show_init_errors(eth_err != ESP_OK, !clock_has_rtc());
 
     xQueueReset(s_enc_queue);   // drop knob turns made during boot, before the UI was up

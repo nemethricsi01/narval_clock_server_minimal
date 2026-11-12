@@ -34,11 +34,34 @@ Flash over the CP2102 port (COM60) and check:
 - [ ] **Find devices:** Menu > Find devices lists the PIC32 boards with Announce on (IP, name, MAC), the same
   ones `find_pic32.py` finds; a board that is power-cycled while the screen is open appears too. Click clears the
   list and searches again; long-press goes back. Without a cable it says "No network".
+- [ ] **Settings screens (after the `config.c` change):** each setting (CAN rate, NTP rate, DST, timezone, RTC
+  trim, brightness, network + NTP server) takes effect on Click and is still set after a reboot; Hold leaves it
+  unchanged; cancelling Brightness puts the old level back; cancelling an IP edit restores that address.
 - [ ] **Announce:** `find_pic32.py` on the PC lists `NARV_CLK_SERV` with this device's IP and MAC. With
   `find_pic32.py -t 60` running, unplugging and replugging the cable makes it appear with "DHCP/Power event
   occurred".
 
 Then merge `fix/static-ip-and-can` into `main`.
+
+## Web server (planned)
+
+Same functions as the screen, in a browser. Stack: ESP-IDF `esp_http_server` with a JSON API and a WebSocket
+for live data, and a Svelte + Vite page built on the PC into one gzipped file embedded in the firmware.
+
+- [x] **Shared settings** — done 2026-11-12: the live settings are in `config.c` (`config_get()` /
+  `config_set()`, safe from any task; saves to NVS and applies brightness and network changes). The screen
+  edits a copy and commits only the field it changed. The choice labels are there too, for the web page.
+- [ ] **Partition table** — the app is ~860 KB in a 1 MB single-app slot. Switch to a custom table with two
+  ~3 MB OTA slots (8 MB flash), which also allows firmware updates from the browser.
+- [ ] **HTTP server + JSON API** — `GET /api/status` (time, date, IP, link, last sync, RTC present),
+  `GET/POST /api/settings` (via `config_get`/`config_set`, with the choice labels), `GET /api/devices`.
+  JSON via `espressif/cjson` (ESP-IDF v6 no longer ships it). May need `CONFIG_LWIP_MAX_SOCKETS` raised.
+- [ ] **WebSocket** — clock tick, CAN Monitor frames, Find devices results.
+- [ ] **Web page** — Svelte + Vite, built into one gzipped `index.html`, embedded with `EMBED_FILES`.
+- [ ] **mDNS** — `http://narv-clk-serv.local` (`espressif/mdns`).
+- [ ] **Password** — at least HTTP Basic auth; and a network change from the browser should be confirmed, and
+  reverted if the page can't reach the device at the new address.
+- [ ] **Firmware update from the browser** (OTA), after the partition table change.
 
 ## Open issues
 
@@ -65,7 +88,6 @@ Then merge `fix/static-ip-and-can` into `main`.
 
 | Location | What | Safe to delete? |
 |---|---|---|
-| `ui.h`, `ui.c` | `ui_net_config_t`, `ui_get_net_config()`, `s_net_applied` (no callers) | yes |
 | `encoder.h`, `encoder.c` | `encoder_get_count()`; `s_knob` can then become local | yes |
 | `can.h`, `can.c` | `can_service_get_queue()` (no callers) | yes |
 | `can_monitor.h`, `can_monitor.c` | `can_mon_push_separator()` (only the `_from_ui` variant is used) | yes |
@@ -97,15 +119,12 @@ About 460 lines (~11% of the ~4,050 lines in `main/`) could go without hurting r
   and the `on_menu_select` switch.
 - [ ] **One `show_screen()` helper** (~75): the 15 `ui_open_*`/`ui_show_*` transitions repeat the same four
   lines. Keep the `lv_indev_set_group()` call: focus events carry the group's indev, which drives the focus highlight.
-- [ ] **Generic value picker** (~65): `brightness_step`, `rtc_trim_step`, `update_rate_step`,
-  `ntp_update_rate_step`, `dst_step`, `tz_step` and their `ui_encoder_event()` cases become one
-  `picker_t {int *val; int min, max, step; void (*refresh)(void);}`. Keep the "Fixed: no RTC" lock on the NTP rate.
-- [ ] **Use `settings_t` as the UI state** (~60): `static settings_t s_cfg, s_saved;` replaces 12 state
-  variables and 12 `*_saved` copies; `save_settings()` becomes `settings_save(&s_cfg)`, `ui_init()` copies one struct.
+- [ ] **Generic value picker** (~30): the three rollers already share `roller_step()`; `brightness_step`,
+  `rtc_trim_step` and `tz_step` could join them in one `picker_t {int *val; int min, max, step; void (*refresh)(void);}`.
+  Keep the "Fixed: no RTC" lock on the NTP rate.
 - [ ] **CAN decoder tables** (~40): `can_monitor.c` LED-range table for 0x10–0x1F/0x30–0x3F and name tables.
 - [ ] **`clock.c` helpers** (~15): `fmt_local_hms()` for the three HH:MM:SS blocks in `clock_task`, a
   `send_frame()` helper in `send_can_datetime()`, and an expression instead of the `effective_dst_hours()` switch.
-- [ ] **IP helpers** (~15): one `fmt_ip()` for the "IP:x.x.x.x" strings (`on_got_ip`, `show_network_status`,
-  `network_screen_refresh`), and an `ip_field_ptr()` for the three `s_ip_field` lookups
-  (`ip_edit_refresh`, `ip_octet_step`, `ui_encoder_event`).
+- [ ] **IP helper** (~10): one `fmt_ip()` for the "x.x.x.x" strings (`on_got_ip`, `show_network_status`,
+  `network_screen_refresh`, `config_ntp_server`).
 - [ ] **Delete the dead code above** (~75).

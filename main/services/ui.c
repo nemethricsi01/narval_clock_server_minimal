@@ -2,7 +2,7 @@
 #include "services/clock.h"
 #include "services/display.h"
 #include "services/network.h"
-#include "services/settings.h"
+#include "services/config.h"
 #include "services/can_monitor.h"
 #include "services/discovery.h"
 #include "drivers/encoder.h"
@@ -62,58 +62,43 @@ static lv_obj_t *s_first_menu_btn = NULL;
 static lv_obj_t *s_settings_scr       = NULL;
 static lv_obj_t *s_first_settings_btn = NULL;
 
-// Update-rate picker widgets + data
+// The settings being edited on the open settings screen. Loaded with config_get()
+// when the screen opens, written back by commit_settings() on Click, and simply
+// dropped on cancel. The live settings are in config.c.
+static settings_t s_edit;
+
+// What the IP editor and the NTP picker restore on cancel.
+static uint8_t s_ip_backup[4];
+static int     s_ntp_idx_backup;
+static uint8_t s_ntp_ip_backup[4];
+
+// Update-rate picker widgets
 static lv_obj_t *s_update_rate_scr    = NULL;
 static lv_obj_t *s_update_rate_roller = NULL;
 
-// 0 = "Never": no CAN time broadcast. New entries go at the end so saved indices keep their meaning.
-static const uint32_t s_rate_values[] = {
-    1, 60, 120, 300, 600, 1800, 3600, 14400, 43200, 86400, 0,
-};
-#define RATE_COUNT  ((int)(sizeof(s_rate_values) / sizeof(s_rate_values[0])))
-_Static_assert(RATE_COUNT == SETTINGS_CAN_RATE_COUNT, "update SETTINGS_CAN_RATE_COUNT in settings.h");
-static int s_rate_idx = 1;
-
-// NTP update-rate picker widgets + data
+// NTP update-rate picker widgets
 static lv_obj_t *s_ntp_update_rate_scr    = NULL;
 static lv_obj_t *s_ntp_update_rate_roller = NULL;
 static lv_obj_t *s_ntp_rate_hint          = NULL;
 
-static const uint32_t s_ntp_rate_values[] = {
-    300, 1800, 7200, 43200, 86400,
-};
-#define NTP_RATE_COUNT  ((int)(sizeof(s_ntp_rate_values) / sizeof(s_ntp_rate_values[0])))
-static int s_ntp_rate_idx = 0;
-
-// DST picker widgets + data  (0=Winter, 1=Summer, 2=Auto)
+// DST picker widgets
 static lv_obj_t *s_dst_scr    = NULL;
 static lv_obj_t *s_dst_roller = NULL;
-static int       s_dst_idx    = 0;
 
-// Timezone picker widgets + data  (idx 0=UTC-12 … idx 12=UTC … idx 24=UTC+12)
+// Timezone picker widgets
 static lv_obj_t *s_tz_scr   = NULL;
 static lv_obj_t *s_tz_table = NULL;
-static int       s_tz_idx   = 12;
-
-static const char *const s_tz_names[25] = {
-    "UTC-12", "UTC-11", "UTC-10", "UTC-9",  "UTC-8",  "UTC-7",  "UTC-6",
-    "UTC-5",  "UTC-4",  "UTC-3",  "UTC-2",  "UTC-1",  "UTC",    "UTC+1 (CET)",
-    "UTC+2",  "UTC+3",  "UTC+4",  "UTC+5",  "UTC+6",  "UTC+7",  "UTC+8",
-    "UTC+9",  "UTC+10", "UTC+11", "UTC+12",
-};
 #define TZ_ROW_H  34  // montserrat_20 (~25px) + top/bottom cell padding
 
 // Brightness screen widgets
 static lv_obj_t *s_brightness_scr   = NULL;
 static lv_obj_t *s_brightness_label = NULL;
 static lv_obj_t *s_brightness_bar   = NULL;
-static int       s_brightness_pct   = 100;
 
-// RTC trim screen widgets + data
+// RTC trim screen widgets
 static lv_obj_t *s_rtc_trim_scr   = NULL;
 static lv_obj_t *s_rtc_trim_label = NULL;
 static lv_obj_t *s_rtc_trim_bar   = NULL;
-static int       s_rtc_trim       = 0;
 
 // Network screen widgets
 static lv_obj_t *s_network_scr    = NULL;
@@ -128,42 +113,11 @@ static lv_obj_t *s_net_gw_label   = NULL;
 static lv_obj_t *s_net_ntp_btn    = NULL;
 static lv_obj_t *s_net_ntp_label  = NULL;
 
-// Network config state
-static bool    s_net_dhcp    = true;
-static uint8_t s_net_ip[4]   = {192, 168,   1, 100};
-static uint8_t s_net_mask[4] = {255, 255, 255,   0};
-static uint8_t s_net_gw[4]   = {192, 168,   1,   1};
-static bool    s_net_applied = false;
-
-// Entry snapshots — saved on screen open, restored on Back / long-press cancel
-static bool    s_net_dhcp_saved;
-static uint8_t s_net_ip_saved[4];
-static uint8_t s_net_mask_saved[4];
-static uint8_t s_net_gw_saved[4];
-static int     s_ntp_idx_saved;
-static uint8_t s_ntp_ip_saved[4];
-static int     s_brightness_saved;
-static int     s_rate_idx_saved;
-static int     s_ntp_rate_idx_saved;
-static int     s_dst_idx_saved;
-static int     s_tz_idx_saved;
-static int     s_rtc_trim_saved;
-
-// NTP picker screen widgets + data
+// NTP picker screen widgets
 static lv_obj_t *s_ntp_scr        = NULL;
 static lv_obj_t *s_ntp_roller     = NULL;
 static lv_obj_t *s_ntp_hint_label = NULL;
-
-static const char *const s_ntp_server_names[] = {
-    "pool.ntp.org",
-    "time.google.com",
-    "time.cloudflare.com",
-    "time.windows.com",
-    "Manual NTP IP",
-};
-#define NTP_COUNT  5
-static int     s_ntp_idx  = 0;
-static uint8_t s_ntp_ip[4] = {216, 239, 35, 0};  // default manual: time1.google.com
+#define NTP_MANUAL  (SETTINGS_NTP_SERVER_COUNT - 1)   // last choice: manual IP
 
 // IP edit screen widgets
 static lv_obj_t *s_ip_edit_scr    = NULL;
@@ -222,62 +176,58 @@ static void group_click(lv_group_t *g)
 // Value-change helpers (run in LVGL task — LVGL calls are safe)
 // ---------------------------------------------------------------------------
 
+// The brightness changes while turning the knob, as a preview; a cancel puts
+// the live setting back (see the SCREEN_BRIGHTNESS case).
 static void brightness_refresh(void)
 {
-    lv_bar_set_value(s_brightness_bar, s_brightness_pct, LV_ANIM_OFF);
+    lv_bar_set_value(s_brightness_bar, s_edit.brightness_pct, LV_ANIM_OFF);
     char buf[8];
-    snprintf(buf, sizeof(buf), "%d%%", s_brightness_pct);
+    snprintf(buf, sizeof(buf), "%d%%", s_edit.brightness_pct);
     lv_label_set_text(s_brightness_label, buf);
-    display_set_brightness((uint8_t)s_brightness_pct);
+    display_set_brightness((uint8_t)s_edit.brightness_pct);
 }
 
 static void brightness_step(int dir)
 {
-    s_brightness_pct += dir * 5;
-    if (s_brightness_pct < 20)  s_brightness_pct = 20;
-    if (s_brightness_pct > 100) s_brightness_pct = 100;
+    s_edit.brightness_pct += dir * 5;
+    if (s_edit.brightness_pct < SETTINGS_BRIGHTNESS_MIN) s_edit.brightness_pct = SETTINGS_BRIGHTNESS_MIN;
+    if (s_edit.brightness_pct > 100)                     s_edit.brightness_pct = 100;
     brightness_refresh();
 }
 
 static void rtc_trim_refresh(void)
 {
     char buf[8];
-    snprintf(buf, sizeof(buf), "%+d", s_rtc_trim);
+    snprintf(buf, sizeof(buf), "%+d", s_edit.rtc_trim);
     lv_label_set_text(s_rtc_trim_label, buf);
-    lv_bar_set_value(s_rtc_trim_bar, s_rtc_trim, LV_ANIM_OFF);
+    lv_bar_set_value(s_rtc_trim_bar, s_edit.rtc_trim, LV_ANIM_OFF);
 }
 
 static void rtc_trim_step(int dir)
 {
-    s_rtc_trim += dir;
-    if (s_rtc_trim < -128) s_rtc_trim = -128;
-    if (s_rtc_trim >  127) s_rtc_trim =  127;
+    int v = s_edit.rtc_trim + dir;
+    s_edit.rtc_trim = (int8_t)(v < -128 ? -128 : v > 127 ? 127 : v);
     rtc_trim_refresh();
 }
 
-static void update_rate_step(int dir)
+// Moves *idx by dir within 0..count-1 and shows it on the roller.
+static void roller_step(lv_obj_t *roller, int *idx, int count, int dir)
 {
-    s_rate_idx += dir;
-    if (s_rate_idx < 0)          s_rate_idx = 0;
-    if (s_rate_idx >= RATE_COUNT) s_rate_idx = RATE_COUNT - 1;
-    lv_roller_set_selected(s_update_rate_roller, (uint32_t)s_rate_idx, LV_ANIM_OFF);
+    *idx += dir;
+    if (*idx < 0)      *idx = 0;
+    if (*idx >= count) *idx = count - 1;
+    lv_roller_set_selected(roller, (uint32_t)*idx, LV_ANIM_OFF);
 }
 
-static void ntp_update_rate_step(int dir)
+// Joins labels into the '\n'-separated list lv_roller_set_options() takes.
+static void set_roller_options(lv_obj_t *roller, const char *const *labels, int count)
 {
-    if (!clock_has_rtc()) return;   // fixed at 5 min, see ui_show_ntp_update_rate()
-    s_ntp_rate_idx += dir;
-    if (s_ntp_rate_idx < 0)               s_ntp_rate_idx = 0;
-    if (s_ntp_rate_idx >= NTP_RATE_COUNT) s_ntp_rate_idx = NTP_RATE_COUNT - 1;
-    lv_roller_set_selected(s_ntp_update_rate_roller, (uint32_t)s_ntp_rate_idx, LV_ANIM_OFF);
-}
-
-static void dst_step(int dir)
-{
-    s_dst_idx += dir;
-    if (s_dst_idx < 0) s_dst_idx = 0;
-    if (s_dst_idx > 2) s_dst_idx = 2;
-    lv_roller_set_selected(s_dst_roller, (uint32_t)s_dst_idx, LV_ANIM_OFF);
+    char opts[192];
+    size_t n = 0;
+    for (int i = 0; i < count && n < sizeof(opts); i++) {
+        n += snprintf(opts + n, sizeof(opts) - n, "%s%s", i ? "\n" : "", labels[i]);
+    }
+    lv_roller_set_options(roller, opts, LV_ROLLER_MODE_NORMAL);
 }
 
 static void tz_table_draw_cb(lv_event_t *e)
@@ -285,7 +235,7 @@ static void tz_table_draw_cb(lv_event_t *e)
     lv_draw_task_t   *task = lv_event_get_draw_task(e);
     lv_draw_dsc_base_t *base = lv_draw_task_get_draw_dsc(task);
     if (base->part != LV_PART_ITEMS) return;
-    if ((int)base->id1 != s_tz_idx) return;
+    if ((int)base->id1 != s_edit.tz_idx) return;
 
     lv_draw_fill_dsc_t *fill = lv_draw_task_get_fill_dsc(task);
     if (fill) {
@@ -300,20 +250,19 @@ static void tz_table_sync(void)
 {
     lv_obj_invalidate(s_tz_table);
     lv_obj_scroll_to_y(s_tz_table,
-                       s_tz_idx * TZ_ROW_H - TZ_ROW_H,
+                       s_edit.tz_idx * TZ_ROW_H - TZ_ROW_H,
                        LV_ANIM_OFF);
 }
 
 static void tz_step(int dir)
 {
-    s_tz_idx += dir;
-    if (s_tz_idx < 0)  s_tz_idx = 0;
-    if (s_tz_idx > 24) s_tz_idx = 24;
+    s_edit.tz_idx += dir;
+    if (s_edit.tz_idx < 0)                  s_edit.tz_idx = 0;
+    if (s_edit.tz_idx >= SETTINGS_TZ_COUNT) s_edit.tz_idx = SETTINGS_TZ_COUNT - 1;
     tz_table_sync();
 }
 
 // ---------------------------------------------------------------------------
-static void save_settings(void);
 static void can_monitor_refresh(void);
 
 // Forward declarations for screen transitions used by callbacks / helpers
@@ -341,22 +290,20 @@ static void ui_open_discovery(void);
 static void network_screen_refresh(void)
 {
     lv_label_set_text(s_net_mode_label,
-                      s_net_dhcp ? "Mode: DHCP" : "Mode: Static");
+                      s_edit.net_dhcp ? "Mode: DHCP" : "Mode: Static");
 
-    char buf[32];
-    snprintf(buf, sizeof(buf), "IP  : %d.%d.%d.%d",
-             s_net_ip[0], s_net_ip[1], s_net_ip[2], s_net_ip[3]);
+    const uint8_t *ip = s_edit.net_ip, *mask = s_edit.net_mask, *gw = s_edit.net_gw;
+    char buf[48];
+    snprintf(buf, sizeof(buf), "IP  : %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
     lv_label_set_text(s_net_ip_label, buf);
 
-    snprintf(buf, sizeof(buf), "Mask: %d.%d.%d.%d",
-             s_net_mask[0], s_net_mask[1], s_net_mask[2], s_net_mask[3]);
+    snprintf(buf, sizeof(buf), "Mask: %d.%d.%d.%d", mask[0], mask[1], mask[2], mask[3]);
     lv_label_set_text(s_net_mask_label, buf);
 
-    snprintf(buf, sizeof(buf), "GW  : %d.%d.%d.%d",
-             s_net_gw[0], s_net_gw[1], s_net_gw[2], s_net_gw[3]);
+    snprintf(buf, sizeof(buf), "GW  : %d.%d.%d.%d", gw[0], gw[1], gw[2], gw[3]);
     lv_label_set_text(s_net_gw_label, buf);
 
-    if (s_net_dhcp) {
+    if (s_edit.net_dhcp) {
         lv_obj_add_state(s_net_ip_btn,   LV_STATE_DISABLED);
         lv_obj_add_state(s_net_mask_btn, LV_STATE_DISABLED);
         lv_obj_add_state(s_net_gw_btn,   LV_STATE_DISABLED);
@@ -366,12 +313,9 @@ static void network_screen_refresh(void)
         lv_obj_remove_state(s_net_gw_btn,   LV_STATE_DISABLED);
     }
 
-    if (s_ntp_idx < NTP_COUNT - 1) {
-        snprintf(buf, sizeof(buf), "NTP: %s", s_ntp_server_names[s_ntp_idx]);
-    } else {
-        snprintf(buf, sizeof(buf), "NTP: %d.%d.%d.%d",
-                 s_ntp_ip[0], s_ntp_ip[1], s_ntp_ip[2], s_ntp_ip[3]);
-    }
+    char server[32];
+    config_ntp_server(&s_edit, server, sizeof(server));
+    snprintf(buf, sizeof(buf), "NTP: %s", server);
     lv_label_set_text(s_net_ntp_label, buf);
 }
 
@@ -379,14 +323,23 @@ static void network_screen_refresh(void)
 // IP editor helpers
 // ---------------------------------------------------------------------------
 
+// The address the IP editor is changing, inside s_edit.
+static uint8_t *ip_field_ptr(void)
+{
+    switch (s_ip_field) {
+    case IP_FIELD_IP:   return s_edit.net_ip;
+    case IP_FIELD_MASK: return s_edit.net_mask;
+    case IP_FIELD_GW:   return s_edit.net_gw;
+    default:            return s_edit.ntp_ip;
+    }
+}
+
 static void ip_edit_refresh(void)
 {
     static const char *const field_names[] = {
         "IP Address", "Subnet Mask", "Gateway", "NTP Server IP"
     };
-    const uint8_t *oct = (s_ip_field == IP_FIELD_IP)   ? s_net_ip   :
-                         (s_ip_field == IP_FIELD_MASK)  ? s_net_mask :
-                         (s_ip_field == IP_FIELD_GW)    ? s_net_gw   : s_ntp_ip;
+    const uint8_t *oct = ip_field_ptr();
 
     char title[32];
     snprintf(title, sizeof(title), "%s  [%d/4]",
@@ -407,9 +360,7 @@ static void ip_edit_refresh(void)
 
 static void ip_octet_step(int dir)
 {
-    uint8_t *oct = (s_ip_field == IP_FIELD_IP)   ? s_net_ip   :
-                   (s_ip_field == IP_FIELD_MASK)  ? s_net_mask :
-                   (s_ip_field == IP_FIELD_GW)    ? s_net_gw   : s_ntp_ip;
+    uint8_t *oct = ip_field_ptr();
     int val = (int)oct[s_ip_octet] + dir;
     if (val < 0)   val = 255;
     if (val > 255) val = 0;
@@ -433,24 +384,24 @@ static void ip_octet_next(void)
 
 static void ntp_refresh(void)
 {
-    lv_roller_set_selected(s_ntp_roller, (uint32_t)s_ntp_idx, LV_ANIM_OFF);
+    lv_roller_set_selected(s_ntp_roller, (uint32_t)s_edit.ntp_idx, LV_ANIM_OFF);
 
     lv_label_set_text(s_ntp_hint_label,
-                      (s_ntp_idx == NTP_COUNT - 1) ? "Click: edit IP  Hold: cancel"
-                                                   : "Click: save  Hold: cancel");
+                      (s_edit.ntp_idx == NTP_MANUAL) ? "Click: edit IP  Hold: cancel"
+                                                     : "Click: save  Hold: cancel");
 }
 
 static void ntp_step(int dir)
 {
-    s_ntp_idx += dir;
-    if (s_ntp_idx < 0)          s_ntp_idx = 0;
-    if (s_ntp_idx >= NTP_COUNT) s_ntp_idx = NTP_COUNT - 1;
+    s_edit.ntp_idx += dir;
+    if (s_edit.ntp_idx < 0)          s_edit.ntp_idx = 0;
+    if (s_edit.ntp_idx > NTP_MANUAL) s_edit.ntp_idx = NTP_MANUAL;
     ntp_refresh();
 }
 
 static void ntp_confirm(void)
 {
-    if (s_ntp_idx == NTP_COUNT - 1) {
+    if (s_edit.ntp_idx == NTP_MANUAL) {
         ui_open_ip_edit(IP_FIELD_NTP);
     } else {
         ui_show_network();
@@ -494,28 +445,37 @@ static void show_notice(const char *msg)
 }
 
 // ---------------------------------------------------------------------------
-// Persist all current settings to NVS
+// Commit the open screen's edit to the live settings (and NVS)
 // ---------------------------------------------------------------------------
 
-static void save_settings(void)
+// Copies only the fields the current screen edits into the live settings, so a
+// change made elsewhere meanwhile (e.g. from the web page) isn't overwritten.
+// Call before switching screens.
+static void commit_settings(void)
 {
-    settings_t s = {
-        .net_dhcp       = s_net_dhcp,
-        .ntp_idx        = s_ntp_idx,
-        .brightness_pct = s_brightness_pct,
-        .rate_idx       = s_rate_idx,
-        .ntp_rate_idx   = s_ntp_rate_idx,
-        .dst_idx        = s_dst_idx,
-        .tz_idx         = s_tz_idx,
-        .rtc_trim       = (int8_t)s_rtc_trim,
-    };
-    memcpy(s.net_ip,   s_net_ip,   4);
-    memcpy(s.net_mask, s_net_mask, 4);
-    memcpy(s.net_gw,   s_net_gw,   4);
-    memcpy(s.ntp_ip,   s_ntp_ip,   4);
+    settings_t s;
+    config_get(&s);
+    switch (s_current_screen) {
+    case SCREEN_UPDATE_RATE:     s.rate_idx       = s_edit.rate_idx;       break;
+    case SCREEN_NTP_UPDATE_RATE: s.ntp_rate_idx   = s_edit.ntp_rate_idx;   break;
+    case SCREEN_DST:             s.dst_idx        = s_edit.dst_idx;        break;
+    case SCREEN_TIMEZONE:        s.tz_idx         = s_edit.tz_idx;         break;
+    case SCREEN_BRIGHTNESS:      s.brightness_pct = s_edit.brightness_pct; break;
+    case SCREEN_RTC_TRIM:        s.rtc_trim       = s_edit.rtc_trim;       break;
+    case SCREEN_NETWORK:         // addresses and NTP server
+        s.net_dhcp = s_edit.net_dhcp;
+        s.ntp_idx  = s_edit.ntp_idx;
+        memcpy(s.net_ip,   s_edit.net_ip,   4);
+        memcpy(s.net_mask, s_edit.net_mask, 4);
+        memcpy(s.net_gw,   s_edit.net_gw,   4);
+        memcpy(s.ntp_ip,   s_edit.ntp_ip,   4);
+        break;
+    default:
+        return;
+    }
 
     // The change still applies until the next reboot; tell the user it won't last.
-    esp_err_t err = settings_save(&s);
+    esp_err_t err = config_set(&s);
     if (err != ESP_OK) {
         char msg[64];
         snprintf(msg, sizeof(msg), "Settings NOT saved\n%s", esp_err_to_name(err));
@@ -542,26 +502,11 @@ static void show_network_status(void)
 
 static void on_net_apply(lv_event_t *e)
 {
-    s_net_applied = true;
-    network_ip_cfg_t net_cfg = { .dhcp = s_net_dhcp };
-    memcpy(net_cfg.ip,   s_net_ip,   4);
-    memcpy(net_cfg.mask, s_net_mask, 4);
-    memcpy(net_cfg.gw,   s_net_gw,   4);
-    network_apply_ip(&net_cfg);
+    commit_settings();       // config_set() reapplies the network if it changed
     show_network_status();   // already in the LVGL task, no display_lock() needed
-    save_settings();
     ui_show_menu();
 }
-static void on_net_back(lv_event_t *e)
-{
-    s_net_dhcp = s_net_dhcp_saved;
-    memcpy(s_net_ip,   s_net_ip_saved,   4);
-    memcpy(s_net_mask, s_net_mask_saved, 4);
-    memcpy(s_net_gw,   s_net_gw_saved,   4);
-    s_ntp_idx  = s_ntp_idx_saved;
-    memcpy(s_ntp_ip,   s_ntp_ip_saved,   4);
-    ui_show_menu();
-}
+static void on_net_back(lv_event_t *e) { ui_show_menu(); }   // drops the edit
 static void on_net_ip_btn(lv_event_t *e)    { ui_open_ip_edit(IP_FIELD_IP); }
 static void on_net_mask_btn(lv_event_t *e)  { ui_open_ip_edit(IP_FIELD_MASK); }
 static void on_net_gw_btn(lv_event_t *e)    { ui_open_ip_edit(IP_FIELD_GW); }
@@ -569,7 +514,7 @@ static void on_net_ntp_btn(lv_event_t *e)   { ui_open_ntp(); }
 
 static void on_net_mode(lv_event_t *e)
 {
-    s_net_dhcp = !s_net_dhcp;
+    s_edit.net_dhcp = !s_edit.net_dhcp;
     network_screen_refresh();
     lv_group_focus_obj(s_net_mode_btn);
 }
@@ -739,14 +684,11 @@ static void build_update_rate_screen(void)
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
 
     s_update_rate_roller = lv_roller_create(s_update_rate_scr);
-    lv_roller_set_options(s_update_rate_roller,
-        "1 sec\n1 min\n2 min\n5 min\n10 min\n30 min\n1 hour\n4 hours\n12 hours\n24 hours\nNever",
-        LV_ROLLER_MODE_NORMAL);
+    set_roller_options(s_update_rate_roller, config_can_rate_labels, SETTINGS_CAN_RATE_COUNT);
     lv_obj_set_style_text_font(s_update_rate_roller, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_line_space(s_update_rate_roller, 2, LV_PART_MAIN);
     lv_obj_set_style_text_line_space(s_update_rate_roller, 2, LV_PART_SELECTED);
     lv_roller_set_visible_row_count(s_update_rate_roller, 5);
-    lv_roller_set_selected(s_update_rate_roller, (uint32_t)s_rate_idx, LV_ANIM_OFF);
     lv_obj_set_width(s_update_rate_roller, LV_PCT(80));
     lv_obj_align(s_update_rate_roller, LV_ALIGN_CENTER, 0, 6);
 
@@ -766,14 +708,11 @@ static void build_ntp_update_rate_screen(void)
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
 
     s_ntp_update_rate_roller = lv_roller_create(s_ntp_update_rate_scr);
-    lv_roller_set_options(s_ntp_update_rate_roller,
-        "5 min\n30 min\n2 hours\n12 hours\n24 hours",
-        LV_ROLLER_MODE_NORMAL);
+    set_roller_options(s_ntp_update_rate_roller, config_ntp_rate_labels, SETTINGS_NTP_RATE_COUNT);
     lv_obj_set_style_text_font(s_ntp_update_rate_roller, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_line_space(s_ntp_update_rate_roller, 2, LV_PART_MAIN);
     lv_obj_set_style_text_line_space(s_ntp_update_rate_roller, 2, LV_PART_SELECTED);
     lv_roller_set_visible_row_count(s_ntp_update_rate_roller, 5);
-    lv_roller_set_selected(s_ntp_update_rate_roller, (uint32_t)s_ntp_rate_idx, LV_ANIM_OFF);
     lv_obj_set_width(s_ntp_update_rate_roller, LV_PCT(80));
     lv_obj_align(s_ntp_update_rate_roller, LV_ALIGN_CENTER, 0, 6);
 
@@ -793,14 +732,11 @@ static void build_dst_screen(void)
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
 
     s_dst_roller = lv_roller_create(s_dst_scr);
-    lv_roller_set_options(s_dst_roller,
-        "Winter\nSummer\nAuto",
-        LV_ROLLER_MODE_NORMAL);
+    set_roller_options(s_dst_roller, config_dst_labels, SETTINGS_DST_COUNT);
     lv_obj_set_style_text_font(s_dst_roller, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_line_space(s_dst_roller, 2, LV_PART_MAIN);
     lv_obj_set_style_text_line_space(s_dst_roller, 2, LV_PART_SELECTED);
     lv_roller_set_visible_row_count(s_dst_roller, 3);
-    lv_roller_set_selected(s_dst_roller, (uint32_t)s_dst_idx, LV_ANIM_OFF);
     lv_obj_set_width(s_dst_roller, LV_PCT(60));
     lv_obj_align(s_dst_roller, LV_ALIGN_CENTER, 0, 6);
 
@@ -821,15 +757,15 @@ static void build_timezone_screen(void)
 
     s_tz_table = lv_table_create(s_tz_scr);
     lv_table_set_column_count(s_tz_table, 1);
-    lv_table_set_row_count(s_tz_table, 25);
+    lv_table_set_row_count(s_tz_table, SETTINGS_TZ_COUNT);
     lv_table_set_col_width(s_tz_table, 0, 180);
     lv_obj_set_size(s_tz_table, 184, 112);
     lv_obj_set_style_text_font(s_tz_table, &lv_font_montserrat_20, LV_PART_ITEMS);
     lv_obj_set_style_text_align(s_tz_table, LV_TEXT_ALIGN_CENTER, LV_PART_ITEMS);
     lv_obj_align(s_tz_table, LV_ALIGN_CENTER, 0, 4);
 
-    for (int i = 0; i < 25; i++)
-        lv_table_set_cell_value(s_tz_table, i, 0, s_tz_names[i]);
+    for (int i = 0; i < SETTINGS_TZ_COUNT; i++)
+        lv_table_set_cell_value(s_tz_table, i, 0, config_tz_labels[i]);
 
     lv_obj_add_flag(s_tz_table, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
     lv_obj_add_event_cb(s_tz_table, tz_table_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
@@ -848,17 +784,14 @@ static void build_brightness_screen(void)
     lv_label_set_text(title, "Brightness");
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
 
+    // Values are filled in by brightness_refresh() when the screen opens.
     s_brightness_label = lv_label_create(s_brightness_scr);
     lv_obj_set_style_text_font(s_brightness_label, &lv_font_montserrat_20, 0);
-    char pct_buf[8];
-    snprintf(pct_buf, sizeof(pct_buf), "%d%%", s_brightness_pct);
-    lv_label_set_text(s_brightness_label, pct_buf);
     lv_obj_align(s_brightness_label, LV_ALIGN_CENTER, 0, -14);
 
     s_brightness_bar = lv_bar_create(s_brightness_scr);
     lv_obj_set_size(s_brightness_bar, 280, 20);
-    lv_bar_set_range(s_brightness_bar, 20, 100);
-    lv_bar_set_value(s_brightness_bar, s_brightness_pct, LV_ANIM_OFF);
+    lv_bar_set_range(s_brightness_bar, SETTINGS_BRIGHTNESS_MIN, 100);
     lv_obj_align(s_brightness_bar, LV_ALIGN_CENTER, 0, 18);
 
     lv_obj_t *hint = lv_label_create(s_brightness_scr);
@@ -964,14 +897,11 @@ static void build_ntp_screen(void)
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
 
     s_ntp_roller = lv_roller_create(s_ntp_scr);
-    lv_roller_set_options(s_ntp_roller,
-        "pool.ntp.org\ntime.google.com\ntime.cloudflare.com\ntime.windows.com\nManual NTP IP",
-        LV_ROLLER_MODE_NORMAL);
+    set_roller_options(s_ntp_roller, config_ntp_server_labels, SETTINGS_NTP_SERVER_COUNT);
     lv_obj_set_style_text_font(s_ntp_roller, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_line_space(s_ntp_roller, 2, LV_PART_MAIN);
     lv_obj_set_style_text_line_space(s_ntp_roller, 2, LV_PART_SELECTED);
     lv_roller_set_visible_row_count(s_ntp_roller, 5);
-    lv_roller_set_selected(s_ntp_roller, (uint32_t)s_ntp_idx, LV_ANIM_OFF);
     lv_obj_set_width(s_ntp_roller, LV_PCT(80));
     lv_obj_align(s_ntp_roller, LV_ALIGN_CENTER, 0, 4);
 
@@ -1015,7 +945,9 @@ static void can_monitor_refresh(void)
     if (s_current_screen != SCREEN_CAN_MONITOR) return;
     if (!s_can_follow) return;
 
-    can_mon_snapshot(s_can_log_text, sizeof(s_can_log_text), ui_get_tz_offset_hours(), ui_get_dst_mode());
+    settings_t cfg;
+    config_get(&cfg);
+    can_mon_snapshot(s_can_log_text, sizeof(s_can_log_text), config_tz_offset_hours(&cfg), cfg.dst_idx);
     lv_label_set_text_static(s_can_log,
                              s_can_log_text[0] ? s_can_log_text : "Waiting for CAN frames...");
     // Recompute the container's content height for the new text first;
@@ -1158,7 +1090,8 @@ static void ui_show_settings(void)
 
 static void ui_show_update_rate(void)
 {
-    s_rate_idx_saved = s_rate_idx;
+    config_get(&s_edit);
+    lv_roller_set_selected(s_update_rate_roller, (uint32_t)s_edit.rate_idx, LV_ANIM_OFF);
     s_enc_accum = 0;
     s_current_screen = SCREEN_UPDATE_RATE;
     lv_indev_set_group(s_enc_indev, s_empty_group);
@@ -1170,11 +1103,11 @@ static void ui_show_ntp_update_rate(void)
     // Without the DS3231 the clock syncs every CLOCK_NO_RTC_NTP_RATE_SEC (5 min,
     // roller index 0) whatever is set here; show that, and keep the saved choice
     // for when the RTC is back. ntp_update_rate_step() ignores the knob.
+    config_get(&s_edit);
     bool fixed = !clock_has_rtc();
-    lv_roller_set_selected(s_ntp_update_rate_roller, fixed ? 0 : (uint32_t)s_ntp_rate_idx, LV_ANIM_OFF);
+    lv_roller_set_selected(s_ntp_update_rate_roller, fixed ? 0 : (uint32_t)s_edit.ntp_rate_idx, LV_ANIM_OFF);
     lv_label_set_text(s_ntp_rate_hint, fixed ? "Fixed: no RTC  Click: back" : "Click: apply  Hold: cancel");
 
-    s_ntp_rate_idx_saved = s_ntp_rate_idx;
     s_enc_accum = 0;
     s_current_screen = SCREEN_NTP_UPDATE_RATE;
     lv_indev_set_group(s_enc_indev, s_empty_group);
@@ -1183,7 +1116,8 @@ static void ui_show_ntp_update_rate(void)
 
 static void ui_show_dst(void)
 {
-    s_dst_idx_saved = s_dst_idx;
+    config_get(&s_edit);
+    lv_roller_set_selected(s_dst_roller, (uint32_t)s_edit.dst_idx, LV_ANIM_OFF);
     s_enc_accum = 0;
     s_current_screen = SCREEN_DST;
     lv_indev_set_group(s_enc_indev, s_empty_group);
@@ -1192,7 +1126,7 @@ static void ui_show_dst(void)
 
 static void ui_show_timezone(void)
 {
-    s_tz_idx_saved = s_tz_idx;
+    config_get(&s_edit);
     s_enc_accum = 0;
     s_current_screen = SCREEN_TIMEZONE;
     lv_indev_set_group(s_enc_indev, s_empty_group);
@@ -1202,7 +1136,8 @@ static void ui_show_timezone(void)
 
 static void ui_show_brightness(void)
 {
-    s_brightness_saved = s_brightness_pct;
+    config_get(&s_edit);
+    brightness_refresh();
     s_enc_accum = 0;
     s_current_screen = SCREEN_BRIGHTNESS;
     lv_indev_set_group(s_enc_indev, s_empty_group);
@@ -1211,7 +1146,7 @@ static void ui_show_brightness(void)
 
 static void ui_show_rtc_trim(void)
 {
-    s_rtc_trim_saved = s_rtc_trim;
+    config_get(&s_edit);
     s_enc_accum = 0;
     s_current_screen = SCREEN_RTC_TRIM;
     lv_indev_set_group(s_enc_indev, s_empty_group);
@@ -1219,14 +1154,11 @@ static void ui_show_rtc_trim(void)
     lv_screen_load(s_rtc_trim_scr);
 }
 
+// Entering the network screen from the menu starts a new edit; coming back from
+// the IP editor or NTP picker (ui_show_network) keeps it.
 static void ui_open_network(void)
 {
-    s_net_dhcp_saved = s_net_dhcp;
-    memcpy(s_net_ip_saved,   s_net_ip,   4);
-    memcpy(s_net_mask_saved, s_net_mask, 4);
-    memcpy(s_net_gw_saved,   s_net_gw,   4);
-    s_ntp_idx_saved  = s_ntp_idx;
-    memcpy(s_ntp_ip_saved,   s_ntp_ip,   4);
+    config_get(&s_edit);
     s_enc_accum = 0;
     s_current_screen = SCREEN_NETWORK;
     lv_indev_set_group(s_enc_indev, s_network_group);
@@ -1248,6 +1180,8 @@ static void ui_show_network(void)
 
 static void ui_open_ntp(void)
 {
+    s_ntp_idx_backup = s_edit.ntp_idx;
+    memcpy(s_ntp_ip_backup, s_edit.ntp_ip, 4);
     s_enc_accum = 0;
     s_current_screen = SCREEN_NTP;
     lv_indev_set_group(s_enc_indev, s_empty_group);
@@ -1259,6 +1193,7 @@ static void ui_open_ip_edit(ip_field_t field)
 {
     s_ip_field  = field;
     s_ip_octet  = 0;
+    memcpy(s_ip_backup, ip_field_ptr(), 4);
     s_enc_accum = 0;
     s_current_screen = SCREEN_IP_EDIT;
     lv_indev_set_group(s_enc_indev, s_empty_group);
@@ -1310,64 +1245,46 @@ void ui_encoder_event(encoder_event_t event)
         else if (event == ENCODER_CLICK) group_click(s_settings_group);
         break;
 
+    // Value screens: turn to edit s_edit, Click commits it, Hold drops it.
     case SCREEN_UPDATE_RATE:
-        if      (step != 0)               update_rate_step(step);
-        else if (event == ENCODER_CLICK) { ui_show_settings(); save_settings(); }
-        else if (event == ENCODER_LONG) {
-            s_rate_idx = s_rate_idx_saved;
-            lv_roller_set_selected(s_update_rate_roller, (uint32_t)s_rate_idx, LV_ANIM_OFF);
-            ui_show_settings();
-        }
+        if      (step != 0)               roller_step(s_update_rate_roller, &s_edit.rate_idx, SETTINGS_CAN_RATE_COUNT, step);
+        else if (event == ENCODER_CLICK) { commit_settings(); ui_show_settings(); }
+        else if (event == ENCODER_LONG)   ui_show_settings();
         break;
 
-    case SCREEN_NTP_UPDATE_RATE:
-        if      (step != 0)               ntp_update_rate_step(step);
-        else if (event == ENCODER_CLICK) { ui_show_settings(); save_settings(); }
-        else if (event == ENCODER_LONG) {
-            s_ntp_rate_idx = s_ntp_rate_idx_saved;
-            lv_roller_set_selected(s_ntp_update_rate_roller, (uint32_t)s_ntp_rate_idx, LV_ANIM_OFF);
-            ui_show_settings();
-        }
+    case SCREEN_NTP_UPDATE_RATE:   // fixed at 5 min without the RTC, see ui_show_ntp_update_rate()
+        if      (step != 0 && clock_has_rtc()) roller_step(s_ntp_update_rate_roller, &s_edit.ntp_rate_idx, SETTINGS_NTP_RATE_COUNT, step);
+        else if (event == ENCODER_CLICK) { commit_settings(); ui_show_settings(); }
+        else if (event == ENCODER_LONG)   ui_show_settings();
         break;
 
     case SCREEN_DST:
-        if      (step != 0)               dst_step(step);
-        else if (event == ENCODER_CLICK) { ui_show_settings(); save_settings(); }
-        else if (event == ENCODER_LONG) {
-            s_dst_idx = s_dst_idx_saved;
-            lv_roller_set_selected(s_dst_roller, (uint32_t)s_dst_idx, LV_ANIM_OFF);
-            ui_show_settings();
-        }
+        if      (step != 0)               roller_step(s_dst_roller, &s_edit.dst_idx, SETTINGS_DST_COUNT, step);
+        else if (event == ENCODER_CLICK) { commit_settings(); ui_show_settings(); }
+        else if (event == ENCODER_LONG)   ui_show_settings();
         break;
 
     case SCREEN_TIMEZONE:
         if      (step != 0)               tz_step(step);
-        else if (event == ENCODER_CLICK) { ui_show_settings(); save_settings(); }
-        else if (event == ENCODER_LONG) {
-            s_tz_idx = s_tz_idx_saved;
-            tz_table_sync();
-            ui_show_settings();
-        }
+        else if (event == ENCODER_CLICK) { commit_settings(); ui_show_settings(); }
+        else if (event == ENCODER_LONG)   ui_show_settings();
         break;
 
     case SCREEN_BRIGHTNESS:
         if      (step != 0)               brightness_step(step);
-        else if (event == ENCODER_CLICK) { ui_show_menu(); save_settings(); }
+        else if (event == ENCODER_CLICK) { commit_settings(); ui_show_menu(); }
         else if (event == ENCODER_LONG) {
-            s_brightness_pct = s_brightness_saved;
-            display_set_brightness((uint8_t)s_brightness_pct);
+            settings_t cur;   // undo the preview
+            config_get(&cur);
+            display_set_brightness((uint8_t)cur.brightness_pct);
             ui_show_menu();
         }
         break;
 
     case SCREEN_RTC_TRIM:
         if      (step != 0)               rtc_trim_step(step);
-        else if (event == ENCODER_CLICK) { ui_show_settings(); save_settings(); }
-        else if (event == ENCODER_LONG) {
-            s_rtc_trim = s_rtc_trim_saved;
-            rtc_trim_refresh();
-            ui_show_settings();
-        }
+        else if (event == ENCODER_CLICK) { commit_settings(); ui_show_settings(); }
+        else if (event == ENCODER_LONG)   ui_show_settings();
         break;
 
     case SCREEN_NETWORK:
@@ -1379,8 +1296,8 @@ void ui_encoder_event(encoder_event_t event)
         if      (step != 0)               ntp_step(step);
         else if (event == ENCODER_CLICK)  ntp_confirm();
         else if (event == ENCODER_LONG) {
-            s_ntp_idx = s_ntp_idx_saved;
-            memcpy(s_ntp_ip, s_ntp_ip_saved, 4);
+            s_edit.ntp_idx = s_ntp_idx_backup;
+            memcpy(s_edit.ntp_ip, s_ntp_ip_backup, 4);
             ui_show_network();
         }
         break;
@@ -1389,12 +1306,7 @@ void ui_encoder_event(encoder_event_t event)
         if      (step != 0)               ip_octet_step(step);
         else if (event == ENCODER_CLICK)  ip_octet_next();
         else if (event == ENCODER_LONG) {
-            switch (s_ip_field) {
-            case IP_FIELD_IP:   memcpy(s_net_ip,   s_net_ip_saved,   4); break;
-            case IP_FIELD_MASK: memcpy(s_net_mask, s_net_mask_saved, 4); break;
-            case IP_FIELD_GW:   memcpy(s_net_gw,   s_net_gw_saved,   4); break;
-            case IP_FIELD_NTP:  memcpy(s_ntp_ip,   s_ntp_ip_saved,   4); break;
-            }
+            memcpy(ip_field_ptr(), s_ip_backup, 4);
             ui_show_network();
         }
         break;
@@ -1435,25 +1347,13 @@ void ui_encoder_event(encoder_event_t event)
 // Public API
 // ---------------------------------------------------------------------------
 
-esp_err_t ui_init(lv_indev_t *encoder_indev, const settings_t *s)
+esp_err_t ui_init(lv_indev_t *encoder_indev)
 {
-    // Populate state variables from saved settings before building any screen,
-    // so roller positions and other widget initial values are already correct.
-    s_rate_idx       = s->rate_idx;
-    s_ntp_rate_idx   = s->ntp_rate_idx;
-    s_dst_idx        = s->dst_idx;
-    s_tz_idx         = s->tz_idx;
-    s_brightness_pct = s->brightness_pct;
-    s_rtc_trim       = s->rtc_trim;
-    s_net_dhcp       = s->net_dhcp;
-    memcpy(s_net_ip,   s->net_ip,   4);
-    memcpy(s_net_mask, s->net_mask, 4);
-    memcpy(s_net_gw,   s->net_gw,   4);
-    s_ntp_idx        = s->ntp_idx;
-    memcpy(s_ntp_ip,   s->ntp_ip,   4);
-
-    // Apply brightness immediately so the screen starts at the saved level.
-    display_set_brightness((uint8_t)s_brightness_pct);
+    // Start the backlight at the saved level. Each settings screen loads its
+    // values from config when it opens, so nothing else needs seeding here.
+    settings_t cfg;
+    config_get(&cfg);
+    display_set_brightness((uint8_t)cfg.brightness_pct);
 
     s_enc_indev      = encoder_indev;
     s_empty_group    = lv_group_create();
@@ -1493,52 +1393,6 @@ esp_err_t ui_init(lv_indev_t *encoder_indev, const settings_t *s)
 
     ESP_LOGI(TAG, "ready");
     return ESP_OK;
-}
-
-uint32_t ui_get_update_rate_sec(void)
-{
-    return s_rate_values[s_rate_idx];
-}
-
-void ui_get_ntp_server_str(char *out, size_t len)
-{
-    if (s_ntp_idx < NTP_COUNT - 1) {
-        snprintf(out, len, "%s", s_ntp_server_names[s_ntp_idx]);
-    } else {
-        snprintf(out, len, "%d.%d.%d.%d",
-                 s_ntp_ip[0], s_ntp_ip[1], s_ntp_ip[2], s_ntp_ip[3]);
-    }
-}
-
-uint32_t ui_get_ntp_update_rate_sec(void)
-{
-    return s_ntp_rate_values[s_ntp_rate_idx];
-}
-
-int ui_get_dst_mode(void)
-{
-    return s_dst_idx;  // 0=Winter, 1=Summer, 2=Auto
-}
-
-int ui_get_tz_offset_hours(void)
-{
-    return s_tz_idx - 12;  // idx 0 = UTC-12, idx 12 = UTC, idx 24 = UTC+12
-}
-
-int8_t ui_get_rtc_trim(void)
-{
-    return (int8_t)s_rtc_trim;
-}
-
-void ui_get_net_config(ui_net_config_t *out)
-{
-    out->dhcp    = s_net_dhcp;
-    memcpy(out->ip,     s_net_ip,   4);
-    memcpy(out->mask,   s_net_mask, 4);
-    memcpy(out->gw,     s_net_gw,   4);
-    out->ntp_idx = s_ntp_idx;
-    memcpy(out->ntp_ip, s_ntp_ip,   4);
-    out->applied = s_net_applied;
 }
 
 // Guarded: the network "got IP" event can fire before ui_init() builds the label.

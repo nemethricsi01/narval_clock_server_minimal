@@ -28,13 +28,13 @@ esp_err_t settings_load(settings_t *s)
     len = 4; nvs_get_blob(h, "net_ip",   s->net_ip,   &len);
     len = 4; nvs_get_blob(h, "net_mask", s->net_mask, &len);
     len = 4; nvs_get_blob(h, "net_gw",   s->net_gw,   &len);
-    if (nvs_get_u8(h, "ntp_idx",      &v) == ESP_OK && v < 5)                          s->ntp_idx        = v;
+    if (nvs_get_u8(h, "ntp_idx",      &v) == ESP_OK && v < SETTINGS_NTP_SERVER_COUNT)  s->ntp_idx        = v;
     len = 4; nvs_get_blob(h, "ntp_ip",   s->ntp_ip,   &len);
-    if (nvs_get_u8(h, "brightness",   &v) == ESP_OK && v >= 20 && v <= 100)            s->brightness_pct = v;
+    if (nvs_get_u8(h, "brightness",   &v) == ESP_OK && v >= SETTINGS_BRIGHTNESS_MIN && v <= 100) s->brightness_pct = v;
     if (nvs_get_u8(h, "rate_idx",     &v) == ESP_OK && v < SETTINGS_CAN_RATE_COUNT)    s->rate_idx       = v;
-    if (nvs_get_u8(h, "ntp_rate_idx", &v) == ESP_OK && v < 5)                          s->ntp_rate_idx   = v;
-    if (nvs_get_u8(h, "dst_idx",      &v) == ESP_OK && v <= 2)                         s->dst_idx        = v;
-    if (nvs_get_u8(h, "tz_idx",       &v) == ESP_OK && v <= 24)                        s->tz_idx         = v;
+    if (nvs_get_u8(h, "ntp_rate_idx", &v) == ESP_OK && v < SETTINGS_NTP_RATE_COUNT)    s->ntp_rate_idx   = v;
+    if (nvs_get_u8(h, "dst_idx",      &v) == ESP_OK && v < SETTINGS_DST_COUNT)         s->dst_idx        = v;
+    if (nvs_get_u8(h, "tz_idx",       &v) == ESP_OK && v < SETTINGS_TZ_COUNT)          s->tz_idx         = v;
     if (nvs_get_u8(h, "rtc_trim",     &v) == ESP_OK)                                   s->rtc_trim       = (int8_t)v;
 
     nvs_close(h);

@@ -12,6 +12,7 @@ idf_component_register(
         "services/ui.c"
         "services/clock.c"
         "services/settings.c"
+        "services/config.c"
         "services/usb_bridge.c"
         "services/discovery.c"
     INCLUDE_DIRS "."

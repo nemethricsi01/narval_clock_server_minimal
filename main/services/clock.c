@@ -4,6 +4,7 @@
 #include "can_monitor.h"
 #include "usb_bridge.h"
 #include "board.h"
+#include "services/config.h"
 #include "services/display.h"
 #include "services/ui.h"
 
@@ -224,17 +225,17 @@ static void clock_task(void *arg)
         }
         if (!s_ui_ready) continue;   // wait for LVGL widgets to be built
 
-        // Snapshot all mutable UI settings in one lock window so clock_task never
-        // races with the LVGL task modifying the same state on the other core.
-        display_lock();
-        uint32_t cur_ntp_rate = ui_get_ntp_update_rate_sec();
-        uint32_t cur_can_rate = ui_get_update_rate_sec();
-        int      tz_offset    = ui_get_tz_offset_hours();
-        int      dst_mode     = ui_get_dst_mode();
-        int8_t   cur_rtc_trim = ui_get_rtc_trim();
+        // One consistent snapshot of the live settings per tick; changes from the
+        // screen (or the web page) take effect here within a second.
+        settings_t cfg;
+        config_get(&cfg);
+        uint32_t cur_ntp_rate = config_ntp_rate_sec(&cfg);
+        uint32_t cur_can_rate = config_can_rate_sec(&cfg);
+        int      tz_offset    = config_tz_offset_hours(&cfg);
+        int      dst_mode     = cfg.dst_idx;
+        int8_t   cur_rtc_trim = cfg.rtc_trim;
         char     cur_ntp_server[32];
-        ui_get_ntp_server_str(cur_ntp_server, sizeof(cur_ntp_server));
-        display_unlock();
+        config_ntp_server(&cfg, cur_ntp_server, sizeof(cur_ntp_server));
         if (!s_has_rtc) cur_ntp_rate = CLOCK_NO_RTC_NTP_RATE_SEC;   // the user's choice is kept for when the RTC is back
 
         // Query NTP whenever a new IP arrives: the first one starts SNTP, later

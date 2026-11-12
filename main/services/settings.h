@@ -4,18 +4,21 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
+// The persisted settings. At runtime the live copy is in config.c (config_get /
+// config_set); this file only loads and saves it. The index fields select from
+// the choice tables in config.c.
 typedef struct {
     // Network
     bool    net_dhcp;
     uint8_t net_ip[4];
     uint8_t net_mask[4];
     uint8_t net_gw[4];
-    int     ntp_idx;        // 0-3 predefined, 4 manual
+    int     ntp_idx;        // 0-3 predefined server, 4 = manual (ntp_ip)
     uint8_t ntp_ip[4];      // manual NTP IP
     // Display
-    int     brightness_pct;
+    int     brightness_pct; // SETTINGS_BRIGHTNESS_MIN..100
     // CAN
-    int     rate_idx;       // index into ui.c's CAN rate list; last entry = Never
+    int     rate_idx;       // CAN time broadcast interval; last = Never
     // NTP
     int     ntp_rate_idx;
     // Time
@@ -24,7 +27,13 @@ typedef struct {
     int8_t  rtc_trim;       // DS3231 aging offset register, -128..+127
 } settings_t;
 
-#define SETTINGS_CAN_RATE_COUNT 11   // entries in ui.c's CAN rate list (checked there)
+// Number of choices for each index field (checked against the tables in config.c).
+#define SETTINGS_CAN_RATE_COUNT    11
+#define SETTINGS_NTP_RATE_COUNT     5
+#define SETTINGS_NTP_SERVER_COUNT   5
+#define SETTINGS_DST_COUNT          3
+#define SETTINGS_TZ_COUNT          25
+#define SETTINGS_BRIGHTNESS_MIN    20
 
 // Defaults: DHCP, UTC+1, DST auto, CAN 1 s, NTP 5 min, brightness 100%, pool.ntp.org
 #define SETTINGS_DEFAULT ((settings_t){  \
