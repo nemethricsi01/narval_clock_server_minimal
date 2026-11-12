@@ -13,9 +13,10 @@ Items marked *after CAN merge* touch files that merge changes, so recheck them f
 - [x] **Missing W5500 or DS3231 causes a boot loop** — fixed 2026-11-11: init errors are returned and
   logged, the device keeps running, and the main screen shows a red "... init failed" line. Without the
   DS3231 the clock itself still doesn't run (its 1 Hz SQW drives `clock_task`); see the next item.
-- [ ] **No clock without the DS3231** — `clock_task` blocks on the DS3231's 1 Hz SQW interrupt, so a missing
-  RTC also means no NTP, no on-screen time and no CAN time broadcast. Option: fall back to a 1 Hz `esp_timer`
-  tick and system time (set by NTP) when the RTC isn't available.
+- [x] **No clock without the DS3231** — fixed 2026-11-12: without the RTC, `clock_task` ticks from an
+  `esp_timer` aligned to system-time seconds and uses system time (set by NTP); NTP is fixed at 5 min and the
+  NTP Update Rate screen shows "Fixed: no RTC". The timer also takes over if the RTC answers but its SQW
+  never arrives. Until the first NTP sync there is no time, so nothing is shown or sent on CAN.
 - [ ] **Encoder callbacks block the esp_timer task** — `main.c:34-39` (`on_encoder_event`). Knob and button
   callbacks run in the esp_timer task and wait on `display_lock()` while LVGL renders (e.g. the CAN log).
   Knob polling (3 ms) and the LVGL tick share that task, so steps get lost.
@@ -50,8 +51,7 @@ Items marked *after CAN merge* touch files that merge changes, so recheck them f
 - [ ] `twai_can.h` (top comment): says "listen-only mode"; the node transmits with the self-test flag on. *After CAN merge.*
 - [ ] `twai_can.c` (self-test comment): says looped-back frames are filtered in `on_rx_done()`. No such filter
   exists, and self-test doesn't loop frames back (that's `enable_loopback`). *After CAN merge.*
-- [ ] `clock.h:9-11`: describes waiting for the Network Apply button; `clock_task` starts SNTP as soon as
-  `network_is_connected()`.
+- [x] `clock.h:9-11`: described waiting for the Network Apply button. Rewritten 2026-11-12.
 - [ ] `lcd_st7789.h:9`: says init turns the backlight on; `lcd_st7789.c` has no backlight code (`display.c` does it).
 - [ ] `clock.c:98-99`: says the TWAI driver keeps a pointer to `data[]`; `can_service_send()` copies into its
   TX pool, so the `static` frames in `send_can_datetime()` aren't needed.

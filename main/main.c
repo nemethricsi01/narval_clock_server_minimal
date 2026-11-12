@@ -89,11 +89,10 @@ void app_main(void)
         ESP_LOGE(TAG, "USB bridge unavailable (%s), continuing without it", esp_err_to_name(usb_err));
     }
 
-    // The clock task is driven by the DS3231's 1 Hz output, so without the RTC
-    // there is no clock, NTP or CAN time broadcast; the UI still works.
-    esp_err_t rtc_err = clock_service_init();
-    if (rtc_err != ESP_OK) {
-        ESP_LOGE(TAG, "RTC unavailable (%s), clock disabled", esp_err_to_name(rtc_err));
+    // Without the DS3231 the clock runs on an internal 1 Hz timer and NTP time.
+    esp_err_t clk_err = clock_service_init();
+    if (clk_err != ESP_OK) {
+        ESP_LOGE(TAG, "clock service failed (%s), continuing without it", esp_err_to_name(clk_err));
     }
 
     ESP_ERROR_CHECK(encoder_init(on_encoder_event, NULL));
@@ -108,7 +107,7 @@ void app_main(void)
     lv_indev_set_read_cb(enc_indev, encoder_read_cb);
 
     ESP_ERROR_CHECK(ui_init(enc_indev, &cfg));
-    ui_show_init_errors(eth_err != ESP_OK, rtc_err != ESP_OK);
+    ui_show_init_errors(eth_err != ESP_OK, !clock_has_rtc());
 
     display_unlock();
 }

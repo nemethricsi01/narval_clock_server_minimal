@@ -75,6 +75,7 @@ static int s_rate_idx = 1;
 // NTP update-rate picker widgets + data
 static lv_obj_t *s_ntp_update_rate_scr    = NULL;
 static lv_obj_t *s_ntp_update_rate_roller = NULL;
+static lv_obj_t *s_ntp_rate_hint          = NULL;
 
 static const uint32_t s_ntp_rate_values[] = {
     300, 1800, 7200, 43200, 86400,
@@ -256,6 +257,7 @@ static void update_rate_step(int dir)
 
 static void ntp_update_rate_step(int dir)
 {
+    if (!clock_has_rtc()) return;   // fixed at 5 min, see ui_show_ntp_update_rate()
     s_ntp_rate_idx += dir;
     if (s_ntp_rate_idx < 0)               s_ntp_rate_idx = 0;
     if (s_ntp_rate_idx >= NTP_RATE_COUNT) s_ntp_rate_idx = NTP_RATE_COUNT - 1;
@@ -721,10 +723,10 @@ static void build_ntp_update_rate_screen(void)
     lv_obj_set_width(s_ntp_update_rate_roller, LV_PCT(80));
     lv_obj_align(s_ntp_update_rate_roller, LV_ALIGN_CENTER, 0, 6);
 
-    lv_obj_t *hint = lv_label_create(s_ntp_update_rate_scr);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
-    lv_label_set_text(hint, "Click: apply  Hold: cancel");
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -4);
+    s_ntp_rate_hint = lv_label_create(s_ntp_update_rate_scr);
+    lv_obj_set_style_text_font(s_ntp_rate_hint, &lv_font_montserrat_14, 0);
+    lv_label_set_text(s_ntp_rate_hint, "Click: apply  Hold: cancel");
+    lv_obj_align(s_ntp_rate_hint, LV_ALIGN_BOTTOM_MID, 0, -4);
 }
 
 static void build_dst_screen(void)
@@ -1059,6 +1061,13 @@ static void ui_show_update_rate(void)
 
 static void ui_show_ntp_update_rate(void)
 {
+    // Without the DS3231 the clock syncs every CLOCK_NO_RTC_NTP_RATE_SEC (5 min,
+    // roller index 0) whatever is set here; show that, and keep the saved choice
+    // for when the RTC is back. ntp_update_rate_step() ignores the knob.
+    bool fixed = !clock_has_rtc();
+    lv_roller_set_selected(s_ntp_update_rate_roller, fixed ? 0 : (uint32_t)s_ntp_rate_idx, LV_ANIM_OFF);
+    lv_label_set_text(s_ntp_rate_hint, fixed ? "Fixed: no RTC  Click: back" : "Click: apply  Hold: cancel");
+
     s_ntp_rate_idx_saved = s_ntp_rate_idx;
     s_enc_accum = 0;
     s_current_screen = SCREEN_NTP_UPDATE_RATE;
@@ -1412,7 +1421,7 @@ void ui_show_init_errors(bool eth_failed, bool rtc_failed)
 
     const char *msg = (eth_failed && rtc_failed) ? "W5500 (LAN) + DS3231 (RTC) init failed"
                     : eth_failed                 ? "W5500 (LAN) init failed"
-                    :                              "DS3231 (RTC) init failed";
+                    :                              "DS3231 (RTC) failed: NTP time only";
 
     // Red line between the top status labels and the clock.
     lv_obj_t *lbl = lv_label_create(s_main_scr);

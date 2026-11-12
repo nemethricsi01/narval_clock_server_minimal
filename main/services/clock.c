@@ -13,6 +13,7 @@
 #include "esp_sntp.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -23,8 +24,13 @@
 
 static const char *TAG = "clock";
 
-static i2c_dev_t         s_rtc;
-static SemaphoreHandle_t s_sqw_sem;
+// If no SQW edge arrives for this long, clock_task switches to the internal timer.
+#define SQW_TIMEOUT_MS  2500
+
+static i2c_dev_t          s_rtc;
+static bool               s_has_rtc      = false;  // DS3231 answered at init; set before clock_task starts
+static SemaphoreHandle_t  s_tick_sem;              // given once per second by the SQW ISR or s_tick_timer
+static esp_timer_handle_t s_tick_timer   = NULL;   // fallback 1 Hz tick; NULL while the SQW drives the clock
 static volatile bool     s_time_valid   = false;
 static volatile bool     s_ui_ready     = false;
 static char              s_ntp_server[32];
@@ -80,14 +86,37 @@ static struct tm utc_to_local(const struct tm *utc, int tz_offset, int dst_mode)
 }
 
 // ---------------------------------------------------------------------------
-// GPIO ISR — fires on each rising edge of the 1 Hz SQW signal
+// 1 Hz tick sources: the DS3231's SQW pin, or an internal timer as fallback
 // ---------------------------------------------------------------------------
 
 static void IRAM_ATTR sqw_isr(void *arg)
 {
     BaseType_t woken = pdFALSE;
-    xSemaphoreGiveFromISR(s_sqw_sem, &woken);
+    xSemaphoreGiveFromISR(s_tick_sem, &woken);
     portYIELD_FROM_ISR(woken);
+}
+
+// One-shot, re-armed to fire just after each whole second of system time, so
+// the displayed and broadcast seconds change on time (NTP keeps system time right).
+static void arm_tick_timer(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    esp_timer_start_once(s_tick_timer, 1000000 - tv.tv_usec + 1000);
+}
+
+static void tick_timer_cb(void *arg)
+{
+    xSemaphoreGive(s_tick_sem);
+    arm_tick_timer();
+}
+
+static esp_err_t start_tick_timer(void)
+{
+    const esp_timer_create_args_t args = { .callback = tick_timer_cb, .name = "clock_1hz" };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&args, &s_tick_timer), TAG, "tick timer create failed");
+    arm_tick_timer();
+    return ESP_OK;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,15 +165,16 @@ static void on_ntp_sync(struct timeval *tv)
     struct tm t;
     gmtime_r(&t_sec, &t);
 
-    if (ds3231_set_time(&s_rtc, &t) == ESP_OK) {
-        s_ntp_sync_utc = t_sec;
-        s_time_valid   = true;
-        ESP_LOGI(TAG, "synced → RTC set: %04d-%02d-%02d %02d:%02d:%02d UTC",
-                 t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
-                 t.tm_hour, t.tm_min, t.tm_sec);
-    } else {
+    // SNTP has already set system time; without the RTC that's all there is to do.
+    if (s_has_rtc && ds3231_set_time(&s_rtc, &t) != ESP_OK) {
         ESP_LOGE(TAG, "RTC write failed after NTP sync");
+        return;
     }
+    s_ntp_sync_utc = t_sec;
+    s_time_valid   = true;
+    ESP_LOGI(TAG, "synced%s: %04d-%02d-%02d %02d:%02d:%02d UTC",
+             s_has_rtc ? " → RTC set" : " (no RTC, system time only)",
+             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,9 +192,18 @@ static void clock_task(void *arg)
     bool     rtc_trim_synced   = false;
     char     last_ip[16]       = "";   // IP seen on the previous tick; "" = offline
 
-    // Tick loop: each 1 Hz rising edge gives the semaphore
+    // Tick loop: the SQW ISR or the fallback timer gives the semaphore once per second
     while (1) {
-        xSemaphoreTake(s_sqw_sem, portMAX_DELAY);
+        if (xSemaphoreTake(s_tick_sem, pdMS_TO_TICKS(SQW_TIMEOUT_MS)) != pdTRUE) {
+            // The DS3231 answers but its SQW never arrives (e.g. a broken SQW line):
+            // keep reading the RTC, but tick from the internal timer.
+            if (!s_tick_timer) {
+                ESP_LOGW(TAG, "no 1 Hz SQW from the DS3231 — switching to the internal timer");
+                gpio_isr_handler_remove(BOARD_PIN_RTC_SQW);
+                start_tick_timer();
+            }
+            continue;
+        }
         if (!s_ui_ready) continue;   // wait for LVGL widgets to be built
 
         // Snapshot all mutable UI settings in one lock window so clock_task never
@@ -178,6 +217,7 @@ static void clock_task(void *arg)
         char     cur_ntp_server[32];
         ui_get_ntp_server_str(cur_ntp_server, sizeof(cur_ntp_server));
         display_unlock();
+        if (!s_has_rtc) cur_ntp_rate = CLOCK_NO_RTC_NTP_RATE_SEC;   // the user's choice is kept for when the RTC is back
 
         // Query NTP whenever a new IP arrives: the first one starts SNTP, later
         // ones (cable plugged back in, IP changed) restart it, so the time doesn't
@@ -224,14 +264,14 @@ static void clock_task(void *arg)
         // Apply DS3231 aging offset once on startup, then on every user change.
         // ds3231_set_aging_offset also triggers a manual temperature conversion
         // so the new offset takes effect on the oscillator immediately.
-        if (!rtc_trim_synced || cur_rtc_trim != last_rtc_trim) {
+        if (s_has_rtc && (!rtc_trim_synced || cur_rtc_trim != last_rtc_trim)) {
             rtc_trim_synced = true;
             last_rtc_trim   = cur_rtc_trim;
             if (ds3231_set_aging_offset(&s_rtc, cur_rtc_trim) == ESP_OK)
                 ESP_LOGI(TAG, "aging offset → %d", cur_rtc_trim);
         }
 
-        // The rest requires a valid time reading from the DS3231
+        // The rest requires a valid time: seeded from the DS3231 or set by NTP
         if (!s_time_valid) continue;
         ticks_since_valid++;
 
@@ -241,8 +281,13 @@ static void clock_task(void *arg)
             last_can_rate = cur_can_rate;
         }
 
+        // Time source: the DS3231, or system time (set by NTP, or seeded from the
+        // RTC at boot) when there is no RTC or a read fails.
         struct tm utc;
-        if (ds3231_get_time(&s_rtc, &utc) != ESP_OK) continue;
+        if (!s_has_rtc || ds3231_get_time(&s_rtc, &utc) != ESP_OK) {
+            time_t now = time(NULL);
+            gmtime_r(&now, &utc);
+        }
 
         // Capture UTC time_t for CAN sync tracking before utc_to_local touches the struct
         struct tm utc_copy = utc;
@@ -318,7 +363,14 @@ void clock_notify_ui_ready(void)
     s_ui_ready = true;
 }
 
-esp_err_t clock_service_init(void)
+bool clock_has_rtc(void)
+{
+    return s_has_rtc;
+}
+
+// Inits the DS3231 with a 1 Hz SQW and seeds system time from it.
+// Fails if the chip doesn't answer.
+static esp_err_t rtc_init(void)
 {
     // i2cdev subsystem (must be called once before any ds3231_* call)
     ESP_RETURN_ON_ERROR(i2cdev_init(), TAG, "i2cdev_init failed");
@@ -353,12 +405,12 @@ esp_err_t clock_service_init(void)
     } else {
         ESP_LOGW(TAG, "DS3231 time not valid — waiting for NTP sync");
     }
+    return ESP_OK;
+}
 
-    // Binary semaphore consumed by clock_task, given by ISR
-    s_sqw_sem = xSemaphoreCreateBinary();
-    assert(s_sqw_sem);
-
-    // GPIO interrupt on the SQW pin, rising edge
+// Rising-edge GPIO interrupt on the DS3231's SQW pin.
+static esp_err_t sqw_irq_init(void)
+{
     gpio_config_t io_cfg = {
         .pin_bit_mask = (1ULL << BOARD_PIN_RTC_SQW),
         .mode         = GPIO_MODE_INPUT,
@@ -374,10 +426,29 @@ esp_err_t clock_service_init(void)
         ESP_LOGE(TAG, "gpio_install_isr_service: %s", esp_err_to_name(err));
         return err;
     }
-    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(BOARD_PIN_RTC_SQW, sqw_isr, NULL),
-                        TAG, "isr_handler_add failed");
+    return gpio_isr_handler_add(BOARD_PIN_RTC_SQW, sqw_isr, NULL);
+}
 
-    xTaskCreate(clock_task, "clock", 4096, NULL, 4, NULL);
-    ESP_LOGI(TAG, "ready");
+esp_err_t clock_service_init(void)
+{
+    s_tick_sem = xSemaphoreCreateBinary();
+    assert(s_tick_sem);
+
+    // A missing DS3231 is not fatal: system time (set by NTP) becomes the time
+    // source and an internal timer the 1 Hz tick.
+    esp_err_t err = rtc_init();
+    s_has_rtc = (err == ESP_OK);
+    if (!s_has_rtc) {
+        ESP_LOGW(TAG, "no DS3231 (%s) — using NTP time, synced every %d s",
+                 esp_err_to_name(err), CLOCK_NO_RTC_NTP_RATE_SEC);
+    }
+
+    if (!s_has_rtc || sqw_irq_init() != ESP_OK) {
+        ESP_RETURN_ON_ERROR(start_tick_timer(), TAG, "no 1 Hz tick source");
+    }
+
+    ESP_RETURN_ON_FALSE(xTaskCreate(clock_task, "clock", 4096, NULL, 4, NULL) == pdPASS,
+                        ESP_ERR_NO_MEM, TAG, "clock task create failed");
+    ESP_LOGI(TAG, "ready (tick: %s)", s_tick_timer ? "internal timer" : "DS3231 SQW");
     return ESP_OK;
 }
