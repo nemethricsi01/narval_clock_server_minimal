@@ -1,5 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -25,9 +26,14 @@ static const char *TAG = "main";
 //
 // encoder_read_cb always reports RELEASED / diff=0.  LVGL owns no encoder
 // state, so it can never fire spurious clicks when groups are switched.
-// All encoder logic lives in ui_encoder_event (runs in the LVGL task via
-// lv_async_call, so LVGL widgets may be touched freely there).
+// All encoder logic lives in ui_encoder_event, which enc_queue_drain_cb calls
+// in the LVGL task, so LVGL widgets may be touched freely there.
 // ---------------------------------------------------------------------------
+
+#define ENC_QUEUE_LEN       16
+#define ENC_POLL_PERIOD_MS  10
+
+static QueueHandle_t s_enc_queue;
 
 static void encoder_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
@@ -35,11 +41,22 @@ static void encoder_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     data->state    = LV_INDEV_STATE_RELEASED;
 }
 
+// Runs in the esp_timer task, which also polls the knob and button and drives
+// the LVGL tick and the clock's fallback 1 Hz timer: never block here (waiting
+// for the display lock while LVGL renders stalled all of them). If the queue
+// is full the event is dropped.
 static void on_encoder_event(encoder_event_t event, void *user_data)
 {
-    display_lock();
-    lv_async_call(ui_encoder_event, (void *)(uintptr_t)event);
-    display_unlock();
+    xQueueSend(s_enc_queue, &event, 0);
+}
+
+// lv_timer, so it runs in the LVGL task: hands queued encoder events to the UI.
+static void enc_queue_drain_cb(lv_timer_t *timer)
+{
+    encoder_event_t event;
+    while (xQueueReceive(s_enc_queue, &event, 0) == pdTRUE) {
+        ui_encoder_event(event);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +112,8 @@ void app_main(void)
         ESP_LOGE(TAG, "clock service failed (%s), continuing without it", esp_err_to_name(clk_err));
     }
 
+    s_enc_queue = xQueueCreate(ENC_QUEUE_LEN, sizeof(encoder_event_t));
+    assert(s_enc_queue);
     ESP_ERROR_CHECK(encoder_init(on_encoder_event, NULL));
 
     lv_display_t *disp = NULL;
@@ -108,6 +127,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(ui_init(enc_indev, &cfg));
     ui_show_init_errors(eth_err != ESP_OK, !clock_has_rtc());
+
+    xQueueReset(s_enc_queue);   // drop knob turns made during boot, before the UI was up
+    lv_timer_create(enc_queue_drain_cb, ENC_POLL_PERIOD_MS, NULL);
 
     display_unlock();
 }

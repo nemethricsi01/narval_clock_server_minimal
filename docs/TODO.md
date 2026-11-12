@@ -17,19 +17,16 @@ Items marked *after CAN merge* touch files that merge changes, so recheck them f
   `esp_timer` aligned to system-time seconds and uses system time (set by NTP); NTP is fixed at 5 min and the
   NTP Update Rate screen shows "Fixed: no RTC". The timer also takes over if the RTC answers but its SQW
   never arrives. Until the first NTP sync there is no time, so nothing is shown or sent on CAN.
-- [ ] **Encoder callbacks block the esp_timer task** — `main.c:34-39` (`on_encoder_event`). Knob and button
-  callbacks run in the esp_timer task and wait on `display_lock()` while LVGL renders (e.g. the CAN log).
-  Knob polling (3 ms) and the LVGL tick share that task, so steps get lost.
-  Fix: non-blocking `xQueueSend()` in the callback, drain the queue from an `lv_timer` in the LVGL task.
+- [x] **Encoder callbacks block the esp_timer task** — fixed 2026-11-12: `on_encoder_event()` only does a
+  non-blocking `xQueueSend()`; an `lv_timer` (10 ms) in the LVGL task drains the queue into `ui_encoder_event()`.
 - [ ] **CAN Monitor timestamps ignore Auto DST** — `ui.c` `can_monitor_refresh()`. DST is added only for
   mode Summer (`== 1`), but the default is Auto (`settings.h:38`), so in summer the log is an hour off from
   the TX TIME it shows. Fix: reuse `utc_to_local()` from `clock.c:72` (export it) per log entry.
 - [ ] **Placeholder text looks like real data** — `ui.c` (`build_main_screen`). "12:34:56" and "2026/04/30"
   stay until real values arrive, so a unit with a dead RTC battery and no network shows a believable fake
   time. Fix: "--:--:--", "----/--/--". (The IP part is done: `ui_init()` and link-down now show "IP: --".)
-- [ ] **Encoder events can arrive before `lv_init()`** — `main.c:80` runs before `display_init()` (`main.c:83`).
-  Turning the knob in that window calls `lv_async_call()`, which allocates from LVGL's heap before it exists.
-  Fix: call `encoder_init()` after `ui_init()`.
+- [x] **Encoder events can arrive before `lv_init()`** — fixed 2026-11-12 by the item above: the callback no
+  longer touches LVGL, and knob events queued during boot are discarded once the UI is up.
 - [ ] **RTC validity ignores the oscillator-stop flag** — `clock.c:325`. Only year ≥ 2020 is checked, so a
   stale time after an oscillator stop is broadcast on CAN until NTP syncs. Fix: treat
   `ds3231_get_oscillator_stop_flag()` as invalid time; clear the flag after `on_ntp_sync()` sets the RTC.

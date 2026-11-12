@@ -1171,12 +1171,11 @@ static void ui_open_can_monitor(void)
 }
 
 // ---------------------------------------------------------------------------
-// Central encoder dispatcher — runs in the LVGL task via lv_async_call
+// Central encoder dispatcher — runs in the LVGL task (main.c enc_queue_drain_cb)
 // ---------------------------------------------------------------------------
 
-void ui_encoder_event(void *arg)
+void ui_encoder_event(encoder_event_t event)
 {
-    encoder_event_t event = (encoder_event_t)(uintptr_t)arg;
     int step = accum_step(event);
 
     switch (s_current_screen) {
