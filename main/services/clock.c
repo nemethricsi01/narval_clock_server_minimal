@@ -33,7 +33,10 @@ static SemaphoreHandle_t  s_tick_sem;              // given once per second by t
 static esp_timer_handle_t s_tick_timer   = NULL;   // fallback 1 Hz tick; NULL while the SQW drives the clock
 static volatile bool     s_time_valid   = false;
 static volatile bool     s_ui_ready     = false;
-static char              s_ntp_server[32];
+// SNTP keeps the pointer it is given, so the name in use is never rewritten in
+// place: a new name goes into the other buffer first (see use_ntp_server()).
+static char              s_ntp_server_buf[2][32];
+static const char       *s_ntp_server = s_ntp_server_buf[0];
 static volatile time_t   s_ntp_sync_utc = 0;  // frozen UTC timestamp of last NTP sync; 0 = never
 static volatile time_t   s_can_sync_utc = 0;  // frozen UTC timestamp of last successful CAN send; 0 = never
 
@@ -182,6 +185,16 @@ static void on_ntp_sync(struct timeval *tv)
              t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
 }
 
+// Copies name into the NTP server buffer SNTP isn't using and makes it current.
+// Returns it, ready to hand to SNTP.
+static const char *use_ntp_server(const char *name)
+{
+    char *buf = s_ntp_server_buf[s_ntp_server == s_ntp_server_buf[0] ? 1 : 0];
+    strlcpy(buf, name, sizeof(s_ntp_server_buf[0]));
+    s_ntp_server = buf;
+    return buf;
+}
+
 // ---------------------------------------------------------------------------
 // Clock task — runs forever, blocked on the 1 Hz semaphore
 // ---------------------------------------------------------------------------
@@ -240,8 +253,7 @@ static void clock_task(void *arg)
             sntp_restart();
         } else if (new_ip) {
             sntp_started = true;
-            strncpy(s_ntp_server, cur_ntp_server, sizeof(s_ntp_server) - 1);
-            s_ntp_server[sizeof(s_ntp_server) - 1] = '\0';
+            use_ntp_server(cur_ntp_server);
             last_ntp_rate = cur_ntp_rate;
             ESP_LOGI(TAG, "network up (%s) — starting NTP via %s", cur_ip, s_ntp_server);
             esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(s_ntp_server);
@@ -259,9 +271,7 @@ static void clock_task(void *arg)
 
         // Apply NTP server change immediately if the user updated it
         if (sntp_started && strcmp(cur_ntp_server, s_ntp_server) != 0) {
-            strncpy(s_ntp_server, cur_ntp_server, sizeof(s_ntp_server) - 1);
-            s_ntp_server[sizeof(s_ntp_server) - 1] = '\0';
-            esp_sntp_setservername(0, s_ntp_server);
+            esp_sntp_setservername(0, use_ntp_server(cur_ntp_server));
             sntp_restart();
             ESP_LOGI(TAG, "NTP server → %s", s_ntp_server);
         }
