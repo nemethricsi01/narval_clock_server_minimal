@@ -160,6 +160,7 @@ static void clock_task(void *arg)
     uint32_t ticks_since_valid = 0;
     int8_t   last_rtc_trim     = 0;
     bool     rtc_trim_synced   = false;
+    char     last_ip[16]       = "";   // IP seen on the previous tick; "" = offline
 
     // Tick loop: each 1 Hz rising edge gives the semaphore
     while (1) {
@@ -178,16 +179,26 @@ static void clock_task(void *arg)
         ui_get_ntp_server_str(cur_ntp_server, sizeof(cur_ntp_server));
         display_unlock();
 
-        // Start SNTP once, the first time network becomes available.
+        // Query NTP whenever a new IP arrives: the first one starts SNTP, later
+        // ones (cable plugged back in, IP changed) restart it, so the time doesn't
+        // wait for the next scheduled sync. The query goes out within 0-5 s
+        // (CONFIG_LWIP_SNTP_MAXIMUM_STARTUP_DELAY).
         // This must not be gated on s_time_valid: if the DS3231 has no valid time
         // yet, NTP is the only path to set it via on_ntp_sync.
-        if (!sntp_started && network_is_connected()) {
+        char cur_ip[16] = "";
+        if (network_is_connected()) strlcpy(cur_ip, network_get_ip_str(), sizeof(cur_ip));
+        bool new_ip = cur_ip[0] && strcmp(cur_ip, last_ip) != 0;
+        strcpy(last_ip, cur_ip);   // "" while offline, so reconnecting with the same IP counts too
+
+        if (new_ip && sntp_started) {
+            ESP_LOGI(TAG, "new IP %s — querying NTP now", cur_ip);
+            sntp_restart();
+        } else if (new_ip) {
             sntp_started = true;
             strncpy(s_ntp_server, cur_ntp_server, sizeof(s_ntp_server) - 1);
             s_ntp_server[sizeof(s_ntp_server) - 1] = '\0';
             last_ntp_rate = cur_ntp_rate;
-            ESP_LOGI(TAG, "network up (%s) — starting NTP via %s",
-                     network_get_ip_str(), s_ntp_server);
+            ESP_LOGI(TAG, "network up (%s) — starting NTP via %s", cur_ip, s_ntp_server);
             esp_sntp_config_t sntp_cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(s_ntp_server);
             sntp_cfg.sync_cb = on_ntp_sync;
             esp_netif_sntp_init(&sntp_cfg);
